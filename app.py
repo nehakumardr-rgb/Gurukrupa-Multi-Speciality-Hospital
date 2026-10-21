@@ -3,1327 +3,536 @@ import streamlit as st
 import pandas as pd
 from ortools.sat.python import cp_model
 
-
 # ============================================================
 # PAGE SETUP
 # ============================================================
-
 st.set_page_config(
     page_title="Nurse Roster Optimizer V4",
     page_icon="🏥",
     layout="wide"
 )
 
-# Light-blue healthcare-style interface
 st.markdown(
     """
     <style>
-    /* Main headings */
-    h1, h2, h3 {
-        color: #234E70;
-    }
-
-    /* Checkbox accent */
+    h1, h2, h3 { color: #234E70; }
     [data-testid="stCheckbox"] div[data-baseweb="checkbox"] > div:first-child {
-    background-color: #7BB7D9 !important;
-    border-color: #7BB7D9 !important;
-}
-
-[data-testid="stCheckbox"] div[data-baseweb="checkbox"] svg {
-    fill: white !important;
-}
-
-    /* Availability labels */
-    .availability-note {
-        background-color: #F3F9FC;
-        border-left: 4px solid #7BB7D9;
-        padding: 12px 16px;
-        border-radius: 6px;
-        margin-bottom: 15px;
+        background-color: #7BB7D9 !important;
+        border-color: #7BB7D9 !important;
     }
-
-    /* Capacity cards */
-    .capacity-card {
-        background-color: #F3F9FC;
-        border: 1px solid #D7EAF3;
-        border-radius: 10px;
-        padding: 18px;
-        text-align: center;
-    }
-
-    .capacity-number {
-        font-size: 28px;
-        font-weight: 700;
-        color: #234E70;
-    }
-
-    .capacity-label {
-        font-size: 14px;
-        color: #526777;
+    [data-testid="stCheckbox"] div[data-baseweb="checkbox"] svg {
+        fill: white !important;
     }
     </style>
     """,
     unsafe_allow_html=True
 )
 
-
-# ============================================================
-# CONSTANTS
-# ============================================================
-
-DAYS = [
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-    "Sunday"
-]
-
-SHIFTS = [
-    "Morning",
-    "Evening",
-    "Night"
-]
-
-# Assumption used for the early capacity estimate
-ASSUMED_MAX_SHIFTS_PER_NURSE = 6
-
-
-# ============================================================
-# SESSION STATE
-# ============================================================
+DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+SHIFTS = ["Morning", "Evening", "Night"]
+TARGET_SHIFTS_PER_TYPE = 2
+MAX_NIGHT_SHIFTS_PER_WEEK = 2
+MAX_SHIFTS_PER_WEEK = 6
 
 if "roster" not in st.session_state:
     st.session_state["roster"] = None
-
+if "roster_departments" not in st.session_state:
+    st.session_state["roster_departments"] = {}
 
 # ============================================================
-# HELPER FUNCTIONS
+# OPTIMIZER
 # ============================================================
-
-def calculate_weekly_requirement(staffing_requirements_df):
-    """Total number of nurse-shifts required in the week."""
-    return int(
-        staffing_requirements_df[SHIFTS].sum().sum()
-    )
-
-
-def estimate_minimum_nurses(
-    staffing_requirements_df,
-    max_shifts_per_nurse=ASSUMED_MAX_SHIFTS_PER_NURSE
-):
-    """
-    Early theoretical capacity estimate.
-
-    This does NOT yet consider individual availability,
-    rest constraints, preferences, or skill mix.
-    """
-    weekly_requirement = calculate_weekly_requirement(
-        staffing_requirements_df
-    )
-
-    if max_shifts_per_nurse <= 0:
-        return 0
-
-    return math.ceil(
-        weekly_requirement / max_shifts_per_nurse
-    )
-
-
-def normalize_availability(selected_shifts):
-    """Convert availability selections into usable shift list."""
-    return [
-        shift for shift in SHIFTS
-        if shift in selected_shifts
-    ]
-
-
-def generate_roster(
-    nurses,
-    availability_df,
-    preferences_df,
-    staffing_requirements_df,
-    max_shifts_per_nurse
-):
-    """Generate optimized weekly nurse roster using CP-SAT."""
-
+def generate_roster(nurses, availability_df, nurse_departments, department_staffing_requirements):
+    """Create a department-specific weekly roster using CP-SAT."""
     model = cp_model.CpModel()
-
-    # --------------------------------------------------------
-    # Decision variables
-    # --------------------------------------------------------
-
     x = {}
 
     for nurse in nurses:
-        for day_index, day in enumerate(DAYS):
-            for shift_index, shift in enumerate(SHIFTS):
+        for di, day in enumerate(DAYS):
+            for si, shift in enumerate(SHIFTS):
+                x[nurse, di, si] = model.NewBoolVar(f"x_{nurses.index(nurse)}_{di}_{si}")
 
-                x[nurse, day_index, shift_index] = model.NewBoolVar(
-                    f"x_{nurse}_{day_index}_{shift_index}"
-                )
-
-    # --------------------------------------------------------
-    # Constraint 1: Maximum one shift per nurse per day
-    # --------------------------------------------------------
-
-    for nurse in nurses:
-        for day_index in range(len(DAYS)):
-
-            model.Add(
-                sum(
-                    x[nurse, day_index, shift_index]
-                    for shift_index in range(len(SHIFTS))
-                ) <= 1
-            )
-
-    # --------------------------------------------------------
-    # Constraint 2: Availability / Off day
-    # --------------------------------------------------------
-
+    # Availability, off days, shift-type limits, and valid same-day pairs.
+    availability_lookup = {}
     for _, row in availability_df.iterrows():
+        availability_lookup[(row["Nurse"], row["Day"])] = row
 
-        nurse = row["Nurse"]
-        day_index = DAYS.index(row["Day"])
+    for nurse in nurses:
+        for di, day in enumerate(DAYS):
+            row = availability_lookup[(nurse, day)]
+            allowed = row["Available Shifts"]
+            is_off = bool(row["Off day"])
+            shift_type = row["Shift Type"]
 
-        if row["Off day"]:
-            for shift_index in range(len(SHIFTS)):
+            if is_off:
+                for si in range(len(SHIFTS)):
+                    model.Add(x[nurse, di, si] == 0)
+                continue
+
+            for si, shift in enumerate(SHIFTS):
+                if shift not in allowed:
+                    model.Add(x[nurse, di, si] == 0)
+
+            # Single Shift (or no type selected) allows at most one shift.
+            # Double Shift allows two consecutive shifts on the same day.
+            daily_limit = 2 if shift_type == "Double Shift" else 1
+            model.Add(sum(x[nurse, di, si] for si in range(3)) <= daily_limit)
+
+            # Morning + Night are not consecutive on the same day.
+            model.Add(x[nurse, di, 0] + x[nurse, di, 2] <= 1)
+
+            # A same-day double must be Morning+Evening or Evening+Night.
+            # The daily limit and the Morning+Night constraint enforce this.
+
+    # Department-specific minimum staffing, for every day and shift.
+    for department in ["ICU", "Ward"]:
+        department_nurses = [n for n in nurses if nurse_departments.get(n) == department]
+        req = department_staffing_requirements[department]
+        for di, day in enumerate(DAYS):
+            for si, shift in enumerate(SHIFTS):
+                required = int(req[shift])
                 model.Add(
-                    x[nurse, day_index, shift_index] == 0
+                    sum(x[n, di, si] for n in department_nurses) >= required
                 )
 
-        else:
-            selected = row["Available Shifts"]
-
-            for shift_index, shift in enumerate(SHIFTS):
-
-                if shift not in selected:
-                    model.Add(
-                        x[nurse, day_index, shift_index] == 0
-                    )
-
-    # --------------------------------------------------------
-    # Constraint 3: Staffing requirements
-    # --------------------------------------------------------
-
-    for day_index, day in enumerate(DAYS):
-
-        staffing_row = staffing_requirements_df[
-            staffing_requirements_df["Day"] == day
-        ].iloc[0]
-
-        for shift_index, shift in enumerate(SHIFTS):
-
-            required = int(staffing_row[shift])
-
-            model.Add(
-                sum(
-                    x[nurse, day_index, shift_index]
-                    for nurse in nurses
-                ) >= required
-            )
-
-    # --------------------------------------------------------
-    # Constraint 4: Maximum shifts per nurse per week
-    # --------------------------------------------------------
-
+    # Weekly workload limit and no more than two Night shifts per nurse.
     for nurse in nurses:
+        all_assignments = [
+            x[nurse, di, si]
+            for di in range(len(DAYS))
+            for si in range(len(SHIFTS))
+        ]
+        model.Add(sum(all_assignments) <= MAX_SHIFTS_PER_WEEK)
+        model.Add(sum(x[nurse, di, 2] for di in range(len(DAYS))) <= MAX_NIGHT_SHIFTS_PER_WEEK)
 
-        model.Add(
-            sum(
-                x[nurse, day_index, shift_index]
-                for day_index in range(len(DAYS))
-                for shift_index in range(len(SHIFTS))
-            ) <= max_shifts_per_nurse
-        )
-
-    # --------------------------------------------------------
-    # Constraint 5: Minimum rest = 2 shifts
-    #
-    # A nurse needs TWO complete shift periods between
-    # consecutive assignments.
-    #
-    # Therefore assignments whose shift-slot distance is
-    # 1 or 2 cannot both occur.
-    #
-    # Example:
-    # Monday Morning -> Tuesday Morning
-    # has Monday Evening + Monday Night between them,
-    # so it IS allowed.
-    # --------------------------------------------------------
-
-    all_slots = []
-
-    for day_index in range(len(DAYS)):
-        for shift_index in range(len(SHIFTS)):
-            slot_index = day_index * len(SHIFTS) + shift_index
-            all_slots.append(
-                (day_index, shift_index, slot_index)
-            )
-
+    # Soft target: aim for two Morning, two Evening and two Night shifts
+    # per nurse each week. Leave and staffing feasibility take priority.
+    deviations = []
     for nurse in nurses:
+        for si, shift in enumerate(SHIFTS):
+            count = sum(x[nurse, di, si] for di in range(len(DAYS)))
+            under = model.NewIntVar(0, 7, f"under_{nurses.index(nurse)}_{si}")
+            over = model.NewIntVar(0, 7, f"over_{nurses.index(nurse)}_{si}")
+            model.Add(count - TARGET_SHIFTS_PER_TYPE == over - under)
+            deviations.extend([under, over])
 
-        for i in range(len(all_slots)):
-
-            day_1, shift_1, slot_1 = all_slots[i]
-
-            for j in range(i + 1, len(all_slots)):
-
-                day_2, shift_2, slot_2 = all_slots[j]
-
-                slot_gap = slot_2 - slot_1
-
-                if slot_gap <= 2:
-
-                    model.Add(
-                        x[nurse, day_1, shift_1]
-                        +
-                        x[nurse, day_2, shift_2]
-                        <= 1
-                    )
-
-    # --------------------------------------------------------
-    # Objective
-    #
-    # 1. Reward preferred shifts
-    # 2. Penalize unnecessary assignments
-    # --------------------------------------------------------
-
-    objective_terms = []
-
-    for nurse in nurses:
-
-        preferred_shift = preferences_df.loc[
-            preferences_df["Nurse"] == nurse,
-            "Preferred Shift"
-        ].iloc[0]
-
-        for day_index in range(len(DAYS)):
-            for shift_index, shift in enumerate(SHIFTS):
-
-                variable = x[nurse, day_index, shift_index]
-
-                # Strong reward for preferred shift
-                if preferred_shift == shift:
-                    objective_terms.append(
-                        100 * variable
-                    )
-
-                # Small penalty for every assignment
-                objective_terms.append(
-                    -1 * variable
-                )
-
-    model.Maximize(
-        sum(objective_terms)
-    )
-
-    # --------------------------------------------------------
-    # Solve
-    # --------------------------------------------------------
+    # Minimize deviation from the weekly shift targets. Staffing coverage
+    # remains a hard constraint; no preference-shift feature is used.
+    model.Minimize(sum(deviations))
 
     solver = cp_model.CpSolver()
-
-    solver.parameters.max_time_in_seconds = 10
+    solver.parameters.max_time_in_seconds = 15
     solver.parameters.num_search_workers = 8
-
     status = solver.Solve(model)
 
-    if status not in [
-        cp_model.OPTIMAL,
-        cp_model.FEASIBLE
-    ]:
+    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         return None, status
 
-    # --------------------------------------------------------
-    # Create roster output
-    # --------------------------------------------------------
-
-    roster_data = []
-
+    rows = []
     for nurse in nurses:
+        row = {"Nurse": nurse, "Department": nurse_departments[nurse]}
+        for di, day in enumerate(DAYS):
+            assigned = [
+                shift for si, shift in enumerate(SHIFTS)
+                if solver.Value(x[nurse, di, si])
+            ]
+            row[day] = " + ".join(assigned) if assigned else "Off"
+        rows.append(row)
 
-        row = {"Nurse": nurse}
-
-        for day_index, day in enumerate(DAYS):
-
-            assigned_shift = "Off"
-
-            for shift_index, shift in enumerate(SHIFTS):
-
-                if solver.Value(
-                    x[nurse, day_index, shift_index]
-                ):
-                    assigned_shift = shift
-                    break
-
-            row[day] = assigned_shift
-
-        roster_data.append(row)
-
-    roster_df = pd.DataFrame(roster_data)
-
-    return roster_df, status
+    return pd.DataFrame(rows), status
 
 
-def calculate_roster_metrics(
-    roster_df,
-    staffing_requirements_df
-):
-    """Calculate basic roster coverage metrics."""
+def assigned_count(cell):
+    if not isinstance(cell, str) or cell == "Off":
+        return 0
+    return sum(part in SHIFTS for part in cell.split(" + "))
 
-    total_required = calculate_weekly_requirement(
-        staffing_requirements_df
+
+def calculate_roster_metrics(roster_df, department_staffing_requirements):
+    required = sum(
+        int(department_staffing_requirements[dept][shift]) * 7
+        for dept in ["ICU", "Ward"]
+        for shift in SHIFTS
     )
-
-    total_assigned = 0
-
-    for day in DAYS:
-
-        for shift in SHIFTS:
-
-            total_assigned += (
-                roster_df[day] == shift
-            ).sum()
-
-    coverage = (
-        (total_assigned / total_required) * 100
-        if total_required > 0
-        else 100
+    assigned = sum(
+        assigned_count(roster_df.loc[i, day])
+        for i in roster_df.index
+        for day in DAYS
     )
+    coverage = (assigned / required * 100) if required else 100
+    return required, assigned, coverage
 
-    return total_required, total_assigned, coverage
-    
 
-# ==============================
-# Hospital Name and Application Heading
-# ==============================
+def explain_infeasibility(nurses, availability_df, nurse_departments, department_staffing_requirements):
+    """Return practical, data-based reasons a roster may be infeasible."""
+    issues = []
+    availability_lookup = {
+        (row["Nurse"], row["Day"]): row
+        for _, row in availability_df.iterrows()
+    }
 
+    # Check whether enough nurses in each department are available for each shift.
+    for department in ["ICU", "Ward"]:
+        dept_nurses = [n for n in nurses if nurse_departments.get(n) == department]
+        req = department_staffing_requirements[department]
+        for day in DAYS:
+            for shift in SHIFTS:
+                eligible = 0
+                for nurse in dept_nurses:
+                    row = availability_lookup.get((nurse, day))
+                    if row is not None and not bool(row["Off day"]) and shift in row["Available Shifts"]:
+                        eligible += 1
+                required = int(req[shift])
+                if eligible < required:
+                    issues.append(
+                        f"{department}, {day} {shift}: {required} nurses are required, "
+                        f"but only {eligible} assigned-to-{department} nurse(s) marked themselves available."
+                    )
+
+        weekly_demand = sum(int(req[shift]) * 7 for shift in SHIFTS)
+        weekly_capacity = len(dept_nurses) * MAX_SHIFTS_PER_WEEK
+        if weekly_demand > weekly_capacity:
+            issues.append(
+                f"{department}: weekly staffing demand is {weekly_demand} nurse-shifts, "
+                f"but {len(dept_nurses)} nurse(s) have a combined maximum capacity of "
+                f"{weekly_capacity} shifts at the current 6-shifts-per-nurse limit."
+            )
+
+    # Check for missing department assignments.
+    unassigned = [n for n in nurses if nurse_departments.get(n) not in ("ICU", "Ward")]
+    if unassigned:
+        issues.append("These nurses do not have a department selected: " + ", ".join(unassigned) + ".")
+
+    if not issues:
+        issues.append(
+            "No single obvious shortage was detected. The combination of Off Days, selected shift availability, "
+            "Double Shift selections, the 6-shift weekly limit, and the maximum of 2 Night shifts may conflict."
+        )
+
+    suggestions = [
+        "To make the roster feasible, first review the specific day/shift shortages above.",
+        "Where operationally appropriate, mark additional nurses as available for the short shift, reduce that shift's staffing requirement, or add nurses to the affected department.",
+        "Review multiple Off Days and shift selections. A nurse can only be assigned shifts they marked as available.",
+        "If weekly demand exceeds the displayed department capacity, add nurses or revise staffing requirements. Do not remove safety or rest policies without hospital approval."
+    ]
+    return issues, suggestions
+
+
+def abbreviate_assignment(value):
+    """Convert full shift names to compact roster labels."""
+    if not isinstance(value, str) or value == "Off":
+        return "Off"
+    abbreviations = {"Morning": "M", "Evening": "E", "Night": "N"}
+    return "+".join(abbreviations.get(part.strip(), part.strip()) for part in value.split("+"))
+
+
+# ============================================================
+# APPLICATION HEADING
+# ============================================================
 st.markdown(
     """
-    <h1 style="text-align: center; font-size: 36px;">
+    <h1 style="text-align:center;font-size:36px;">
         Gurukrupa Multi Speciality Hospital
     </h1>
-    <h2 style="text-align: center; font-size: 24px;">
+    <h2 style="text-align:center;font-size:24px;">
         Automated Nurse Roster and Workflow Optimization
     </h2>
     """,
     unsafe_allow_html=True
 )
 
-
-
-
-
 # ============================================================
 # 1. STAFFING REQUIREMENTS
 # ============================================================
-
 st.header("1. Staffing Requirements")
-
-st.caption(
-    "Default requirements for Gurukrupa Multi Speciality Hospital. "
-    "Edit the values if staffing needs change."
-)
-
-# ------------------------------------------------------------
-# ICU and Ward requirements
-# Prefilled values are retained during Streamlit reruns
-# ------------------------------------------------------------
+st.caption("Default requirements are prefilled. Edit them if staffing needs change.")
 
 icu_col, ward_col = st.columns(2)
 
 with icu_col:
     st.subheader("ICU")
-
-    icu_beds = st.number_input(
-        "Bed capacity",
-        min_value=1,
-        max_value=500,
-        value=8,
-        step=1,
-        key="icu_beds_gk"
-    )
-
+    icu_beds = st.number_input("Bed capacity", 1, 500, 8, key="icu_beds_gk")
     st.caption("Nurses required per shift")
-
-    row_label, row_input = st.columns([1.2, 1])
-
-    with row_label:
-        st.write("Morning")
-
-    with row_input:
-        icu_morning = st.number_input(
-            "ICU Morning nurses",
-            min_value=0,
-            max_value=100,
-            value=2,
-            step=1,
-            label_visibility="collapsed",
-            key="icu_morning_gk"
-        )
-
-    row_label, row_input = st.columns([1.2, 1])
-
-    with row_label:
-        st.write("Evening")
-
-    with row_input:
-        icu_evening = st.number_input(
-            "ICU Evening nurses",
-            min_value=0,
-            max_value=100,
-            value=2,
-            step=1,
-            label_visibility="collapsed",
-            key="icu_evening_gk"
-        )
-
-    row_label, row_input = st.columns([1.2, 1])
-
-    with row_label:
-        st.write("Night")
-
-    with row_input:
-        icu_night = st.number_input(
-            "ICU Night nurses",
-            min_value=0,
-            max_value=100,
-            value=2,
-            step=1,
-            label_visibility="collapsed",
-            key="icu_night_gk"
-        )
-
+    icu_morning = st.number_input("Morning", 0, 100, 2, key="icu_morning_gk")
+    icu_evening = st.number_input("Evening", 0, 100, 2, key="icu_evening_gk")
+    icu_night = st.number_input("Night", 0, 100, 2, key="icu_night_gk")
 
 with ward_col:
     st.subheader("Ward")
-
-    ward_beds = st.number_input(
-        "Bed capacity ",
-        min_value=1,
-        max_value=500,
-        value=24,
-        step=1,
-        key="ward_beds_gk"
-    )
-
+    ward_beds = st.number_input("Bed capacity ", 1, 500, 24, key="ward_beds_gk")
     st.caption("Nurses required per shift")
-
-    row_label, row_input = st.columns([1.2, 1])
-
-    with row_label:
-        st.write("Morning")
-
-    with row_input:
-        ward_morning = st.number_input(
-            "Ward Morning nurses",
-            min_value=0,
-            max_value=100,
-            value=3,
-            step=1,
-            label_visibility="collapsed",
-            key="ward_morning_gk"
-        )
-
-    row_label, row_input = st.columns([1.2, 1])
-
-    with row_label:
-        st.write("Evening")
-
-    with row_input:
-        ward_evening = st.number_input(
-            "Ward Evening nurses",
-            min_value=0,
-            max_value=100,
-            value=3,
-            step=1,
-            label_visibility="collapsed",
-            key="ward_evening_gk"
-        )
-
-    row_label, row_input = st.columns([1.2, 1])
-
-    with row_label:
-        st.write("Night")
-
-    with row_input:
-        ward_night = st.number_input(
-            "Ward Night nurses",
-            min_value=0,
-            max_value=100,
-            value=3,
-            step=1,
-            label_visibility="collapsed",
-            key="ward_night_gk"
-        )
-
-
-# ------------------------------------------------------------
-# Department-specific staffing requirements
-# ------------------------------------------------------------
+    ward_morning = st.number_input("Morning ", 0, 100, 3, key="ward_morning_gk")
+    ward_evening = st.number_input("Evening ", 0, 100, 3, key="ward_evening_gk")
+    ward_night = st.number_input("Night ", 0, 100, 3, key="ward_night_gk")
 
 department_staffing_requirements = {
-    "ICU": {
-        "Beds": int(icu_beds),
-        "Morning": int(icu_morning),
-        "Evening": int(icu_evening),
-        "Night": int(icu_night)
-    },
-    "Ward": {
-        "Beds": int(ward_beds),
-        "Morning": int(ward_morning),
-        "Evening": int(ward_evening),
-        "Night": int(ward_night)
-    }
+    "ICU": {"Beds": int(icu_beds), "Morning": int(icu_morning), "Evening": int(icu_evening), "Night": int(icu_night)},
+    "Ward": {"Beds": int(ward_beds), "Morning": int(ward_morning), "Evening": int(ward_evening), "Night": int(ward_night)}
 }
 
-
-# ------------------------------------------------------------
-# Combined daily requirements for existing roster functions
-# ------------------------------------------------------------
-
-staffing_requirements_df = pd.DataFrame({
-    "Day": DAYS,
-    "Morning": [
-        int(icu_morning) + int(ward_morning)
-    ] * 7,
-    "Evening": [
-        int(icu_evening) + int(ward_evening)
-    ] * 7,
-    "Night": [
-        int(icu_night) + int(ward_night)
-    ] * 7
-})
-
-
-# ------------------------------------------------------------
-# Weekly workforce estimate
-# ------------------------------------------------------------
-
-weekly_requirement = calculate_weekly_requirement(
-    staffing_requirements_df
-)
-
-estimated_nurses = estimate_minimum_nurses(
-    staffing_requirements_df
+weekly_required = sum(
+    department_staffing_requirements[d][s] * 7
+    for d in ["ICU", "Ward"] for s in SHIFTS
 )
 
 st.divider()
-
 st.subheader("Weekly Staffing Summary")
+c1, c2, c3 = st.columns(3)
+c1.metric("ICU nurse-shifts", (icu_morning + icu_evening + icu_night) * 7)
+c2.metric("Ward nurse-shifts", (ward_morning + ward_evening + ward_night) * 7)
+c3.metric("Total nurse-shifts", weekly_required)
 
-summary_col1, summary_col2, summary_col3 = st.columns(3)
+# ============================================================
+# 2. NURSE AVAILABILITY
+# ============================================================
+def select_icu(i):
+    if st.session_state.get(f"nurse_icu_gk_{i}", False):
+        st.session_state[f"nurse_ward_gk_{i}"] = False
 
-with summary_col1:
-    st.metric(
-        "ICU nurse-shifts",
-        (icu_morning + icu_evening + icu_night) * 7
-    )
-
-with summary_col2:
-    st.metric(
-        "Ward nurse-shifts",
-        (ward_morning + ward_evening + ward_night) * 7
-    )
-
-with summary_col3:
-    st.metric(
-        "Total nurse-shifts",
-        weekly_requirement
-    )
-
-
-
-
-# ------------------------------------------------------------
-# Department selection callbacks
-# ------------------------------------------------------------
-
-def select_icu(nurse_index):
-    if st.session_state[f"nurse_icu_gk_{nurse_index}"]:
-        st.session_state[f"nurse_ward_gk_{nurse_index}"] = False
-
-
-def select_ward(nurse_index):
-    if st.session_state[f"nurse_ward_gk_{nurse_index}"]:
-        st.session_state[f"nurse_icu_gk_{nurse_index}"] = False
-
-
-
-# ------------------------------------------------------------
-# Nurse information and daily availability
-# ------------------------------------------------------------
+def select_ward(i):
+    if st.session_state.get(f"nurse_ward_gk_{i}", False):
+        st.session_state[f"nurse_icu_gk_{i}"] = False
 
 st.header("2. Nurse Availability")
+number_of_nurses = int(st.number_input(
+    "Number of nurses", min_value=1, max_value=100, value=18, step=1,
+    key="number_of_nurses_gurukrupa"
+))
 
 nurses = []
 nurse_departments = {}
-departments_complete = True
 availability_records = []
-
-number_of_nurses_input = st.number_input(
-    "Number of nurses",
-    min_value=1,
-    max_value=100,
-    value=18,
-    step=1,
-    key="number_of_nurses_gurukrupa"
-)
-
-number_of_nurses = int(number_of_nurses_input)
+missing_names = []
+missing_departments = []
 
 for i in range(number_of_nurses):
-
-    # Nurse name and department on one line
     name_col, icu_col, ward_col = st.columns([3, 1, 1])
-
     with name_col:
         nurse_name = st.text_input(
-            f"Name of Nurse {i + 1}",
-            placeholder="Enter nurse name",
-            key=f"nurse_name_gk_{i}",
-            label_visibility="collapsed"
+            f"Name of Nurse {i + 1}", placeholder="Enter nurse name",
+            key=f"nurse_name_gk_{i}", label_visibility="collapsed"
         ).strip()
-
-    # Department checkboxes
-    icu_key = f"nurse_icu_gk_{i}"
-    ward_key = f"nurse_ward_gk_{i}"
-
+    icu_key, ward_key = f"nurse_icu_gk_{i}", f"nurse_ward_gk_{i}"
     if icu_key not in st.session_state:
         st.session_state[icu_key] = False
-
     if ward_key not in st.session_state:
         st.session_state[ward_key] = False
-
     with icu_col:
-        st.checkbox(
-            "ICU",
-            key=icu_key,
-            on_change=select_icu,
-            args=(i,)
-        )
-
+        st.checkbox("ICU", key=icu_key, on_change=select_icu, args=(i,))
     with ward_col:
-        st.checkbox(
-            "Ward",
-            key=ward_key,
-            on_change=select_ward,
-            args=(i,)
-        )
+        st.checkbox("Ward", key=ward_key, on_change=select_ward, args=(i,))
 
-    # Record nurse name and department
-    if nurse_name:
+    if not nurse_name:
+        missing_names.append(i + 1)
+    else:
         nurses.append(nurse_name)
-
         if st.session_state[icu_key]:
             nurse_departments[nurse_name] = "ICU"
         elif st.session_state[ward_key]:
             nurse_departments[nurse_name] = "Ward"
         else:
-            departments_complete = False
-            st.warning(
-                f"Please select ICU or Ward for {nurse_name}."
-            )
-    else:
-        departments_complete = False
+            missing_departments.append(nurse_name)
 
-    # Daily availability
     day_columns = st.columns(7)
-
-    for day_index, day in enumerate(DAYS):
-
-        with day_columns[day_index]:
-
+    for di, day in enumerate(DAYS):
+        with day_columns[di]:
             st.markdown(f"**{day[:3]}**")
+            morning_key = f"morning_v5_{i}_{di}"
+            evening_key = f"evening_v5_{i}_{di}"
+            night_key = f"night_v5_{i}_{di}"
+            off_key = f"off_v5_{i}_{di}"
+            single_key = f"single_shift_v1_{i}_{di}"
+            double_key = f"double_shift_v1_{i}_{di}"
 
-            morning_key = f"morning_v5_{i}_{day_index}"
-            evening_key = f"evening_v5_{i}_{day_index}"
-            night_key = f"night_v5_{i}_{day_index}"
-            off_key = f"off_v5_{i}_{day_index}"
-            single_key = f"single_shift_v1_{i}_{day_index}"
-            double_key = f"double_shift_v1_{i}_{day_index}"
-
-            # Initialize defaults
             for key, default in [
-                (morning_key, True),
-                (evening_key, True),
-                (night_key, True),
-                (off_key, False),
-                (single_key, False),
-                (double_key, False),
+                (morning_key, True), (evening_key, True), (night_key, True),
+                (off_key, False), (single_key, False), (double_key, False)
             ]:
                 if key not in st.session_state:
                     st.session_state[key] = default
 
-            # Off Day clears all other daily options
-            def handle_off_day(
-                morning_key=morning_key,
-                evening_key=evening_key,
-                night_key=night_key,
-                off_key=off_key,
-                single_key=single_key,
-                double_key=double_key,
-            ):
-                if st.session_state[off_key]:
-                    st.session_state[morning_key] = False
-                    st.session_state[evening_key] = False
-                    st.session_state[night_key] = False
-                    st.session_state[single_key] = False
-                    st.session_state[double_key] = False
+            def handle_off_day(mk=morning_key, ek=evening_key, nk=night_key,
+                               ok=off_key, sk=single_key, dk=double_key):
+                if st.session_state[ok]:
+                    st.session_state[mk] = False
+                    st.session_state[ek] = False
+                    st.session_state[nk] = False
+                    st.session_state[sk] = False
+                    st.session_state[dk] = False
                 else:
-                    st.session_state[morning_key] = True
-                    st.session_state[evening_key] = True
-                    st.session_state[night_key] = True
+                    st.session_state[mk] = True
+                    st.session_state[ek] = True
+                    st.session_state[nk] = True
 
-            # Selecting a shift clears Off Day
-            def handle_shift(
-                morning_key=morning_key,
-                evening_key=evening_key,
-                night_key=night_key,
-                off_key=off_key,
-            ):
-                if (
-                    st.session_state[morning_key]
-                    or st.session_state[evening_key]
-                    or st.session_state[night_key]
-                ):
-                    st.session_state[off_key] = False
+            def handle_shift(mk=morning_key, ek=evening_key, nk=night_key, ok=off_key):
+                if st.session_state[mk] or st.session_state[ek] or st.session_state[nk]:
+                    st.session_state[ok] = False
 
-            # Single and Double Shift are mutually exclusive
-            def handle_single_shift(
-                single_key=single_key,
-                double_key=double_key,
-            ):
-                if st.session_state[single_key]:
-                    st.session_state[double_key] = False
+            def handle_single(sk=single_key, dk=double_key):
+                if st.session_state[sk]:
+                    st.session_state[dk] = False
 
-            def handle_double_shift(
-                single_key=single_key,
-                double_key=double_key,
-            ):
-                if st.session_state[double_key]:
-                    st.session_state[single_key] = False
+            def handle_double(sk=single_key, dk=double_key):
+                if st.session_state[dk]:
+                    st.session_state[sk] = False
 
-            off_current = st.session_state[off_key]
+            is_off = st.session_state[off_key]
+            st.checkbox("Morning", key=morning_key, disabled=is_off, on_change=handle_shift)
+            st.checkbox("Evening", key=evening_key, disabled=is_off, on_change=handle_shift)
+            st.checkbox("Night", key=night_key, disabled=is_off, on_change=handle_shift)
+            st.checkbox("Off Day", key=off_key, on_change=handle_off_day)
+            st.checkbox("Single Shift", key=single_key, disabled=is_off, on_change=handle_single)
+            st.checkbox("Double Shift", key=double_key, disabled=is_off, on_change=handle_double)
 
-            morning = st.checkbox(
-                "Morning",
-                key=morning_key,
-                disabled=off_current,
-                on_change=handle_shift
-            )
-
-            evening = st.checkbox(
-                "Evening",
-                key=evening_key,
-                disabled=off_current,
-                on_change=handle_shift
-            )
-
-            night = st.checkbox(
-                "Night",
-                key=night_key,
-                disabled=off_current,
-                on_change=handle_shift
-            )
-
-            off_day = st.checkbox(
-                "Off Day",
-                key=off_key,
-                on_change=handle_off_day
-            )
-
-            single_shift = st.checkbox(
-                "Single Shift",
-                key=single_key,
-                disabled=off_day,
-                on_change=handle_single_shift
-            )
-
-            double_shift = st.checkbox(
-                "Double Shift",
-                key=double_key,
-                disabled=off_day,
-                on_change=handle_double_shift
-            )
-
-            # Record selected shifts for the optimizer
             selected_shifts = []
-
-            if morning:
+            if st.session_state[morning_key]:
                 selected_shifts.append("Morning")
-
-            if evening:
+            if st.session_state[evening_key]:
                 selected_shifts.append("Evening")
-
-            if night:
+            if st.session_state[night_key]:
                 selected_shifts.append("Night")
-
-            if off_day:
+            if st.session_state[off_key]:
                 selected_shifts = []
 
             availability_records.append({
                 "Nurse": nurse_name or f"Nurse {i + 1}",
                 "Day": day,
                 "Available Shifts": selected_shifts,
-                "Off day": off_day,
+                "Off day": bool(st.session_state[off_key]),
                 "Shift Type": (
-                    "Single Shift" if single_shift
-                    else "Double Shift" if double_shift
+                    "Single Shift" if st.session_state[single_key]
+                    else "Double Shift" if st.session_state[double_key]
                     else None
-                ),
-                "Department": (
-                    nurse_departments.get(nurse_name)
-                    if nurse_name else None
                 )
             })
-
     st.divider()
-
-
-
-# ------------------------------------------------------------
-# Validate nurse information
-# ------------------------------------------------------------
-
-if len(set(nurses)) != len(nurses):
-    st.error("Nurse names must be unique.")
 
 availability_df = pd.DataFrame(availability_records)
 
-
-
-
-
-
 # ============================================================
-# 7. GENERATE ROSTER
+# 3. GENERATE ROSTER
 # ============================================================
-
-st.header("7. Generate Roster")
-
-generate_button = st.button(
-    "Generate Weekly Roster",
-    type="primary",
-    use_container_width=True
-)
+st.header("3. Generate Roster")
+generate_button = st.button("Generate Weekly Roster", type="primary", use_container_width=True)
 
 if generate_button:
-
-    if len(nurses) == 0:
-        st.error("Please enter at least one nurse.")
-
-    elif len(set(nurses)) != len(nurses):
+    if len(missing_names) > 0:
+        st.error("Please enter a name for every nurse.")
+    elif len(nurses) != len(set(nurses)):
         st.error("Nurse names must be unique.")
-
-    elif availability_df.empty:
-        st.error("Please complete nurse availability.")
-
+    elif missing_departments:
+        st.error("Please select ICU or Ward for: " + ", ".join(missing_departments))
+    elif len(nurse_departments) != len(nurses):
+        st.error("Please assign every nurse to ICU or Ward.")
     else:
         with st.spinner("Generating roster..."):
-
             roster_df, status = generate_roster(
-                nurses,
-                availability_df,
-                preferences_df,
-                staffing_requirements_df,
-                max_shifts_per_nurse
+                nurses, availability_df, nurse_departments,
+                department_staffing_requirements
             )
-
         if roster_df is None:
-            st.error(
-                "A feasible roster could not be generated. "
-                "Please review nurse availability and staffing requirements."
+            st.error("A feasible roster could not be generated with the current settings.")
+            issues, suggestions = explain_infeasibility(
+                nurses, availability_df, nurse_departments,
+                department_staffing_requirements
             )
-
+            st.markdown("**Likely reasons**")
+            for issue in issues:
+                st.markdown(f"- {issue}")
+            st.markdown("**What you can change**")
+            for suggestion in suggestions:
+                st.markdown(f"- {suggestion}")
         else:
             st.session_state["roster"] = roster_df
-
+            st.session_state["roster_departments"] = nurse_departments.copy()
             st.success("Weekly roster generated successfully.")
 
-
 # ============================================================
-# 8. ROSTER OUTPUT
+# 4. ROSTER OUTPUT
 # ============================================================
-
 if st.session_state["roster"] is not None:
-
-    st.header("8. Weekly Roster")
-
     roster_df = st.session_state["roster"]
+    st.header("4. Weekly Roster")
 
-    # --------------------------------------------------------
-    # Calculate roster metrics
-    # --------------------------------------------------------
-
-    total_required, total_assigned, coverage = (
-        calculate_roster_metrics(
-            roster_df,
-            staffing_requirements_df
-        )
+    total_required, total_assigned, coverage = calculate_roster_metrics(
+        roster_df, department_staffing_requirements
     )
+    total_capacity = len(roster_df) * MAX_SHIFTS_PER_WEEK
+    unused_capacity = max(0, total_capacity - total_assigned)
+    excess_assignments = max(0, total_assigned - total_required)
 
-    total_capacity = len(nurses) * max_shifts_per_nurse
-    unused_capacity = total_capacity - total_assigned
+    summary_cols = st.columns(4)
+    summary_cols[0].metric("Required nurse-shifts", total_required)
+    summary_cols[1].metric("Assigned nurse-shifts", total_assigned)
+    summary_cols[2].metric("Weekly capacity", total_capacity)
+    summary_cols[3].metric("Unused capacity", unused_capacity)
 
-    excess_assignments = max(
-        0,
-        total_assigned - total_required
-    )
+    # Show compact roster in two separate department tables.
+    # Each table has Nurse first, then Monday through Sunday.
+    display_columns = ["Nurse"] + DAYS
+    display_roster = roster_df.copy()
+    for day in DAYS:
+        display_roster[day] = display_roster[day].apply(abbreviate_assignment)
 
-    # --------------------------------------------------------
-    # Calculate nurse workload
-    # --------------------------------------------------------
+    st.subheader("ICU Roster")
+    icu_roster = display_roster[display_roster["Department"] == "ICU"][display_columns]
+    if icu_roster.empty:
+        st.info("No nurses are currently assigned to ICU.")
+    else:
+        st.dataframe(icu_roster, use_container_width=True, hide_index=True)
 
-    nurse_shift_counts = {}
+    st.subheader("Ward Roster")
+    ward_roster = display_roster[display_roster["Department"] == "Ward"][display_columns]
+    if ward_roster.empty:
+        st.info("No nurses are currently assigned to Ward.")
+    else:
+        st.dataframe(ward_roster, use_container_width=True, hide_index=True)
 
-    for _, row in roster_df.iterrows():
-        nurse_shift_counts[row["Nurse"]] = sum(
-            row[day] in SHIFTS
-            for day in DAYS
-        )
+    st.subheader("Nurse Workload Summary")
+    nurse_shift_counts = {
+        row["Nurse"]: sum(assigned_count(row[day]) for day in DAYS)
+        for _, row in roster_df.iterrows()
+    }
+    workload_df = pd.DataFrame([
+        {
+            "Nurse": nurse,
+            "Department": roster_df.loc[roster_df["Nurse"] == nurse, "Department"].iloc[0],
+            "Assigned Shifts": nurse_shift_counts.get(nurse, 0),
+            "Maximum Allowed": MAX_SHIFTS_PER_WEEK,
+            "Remaining Capacity": max(0, MAX_SHIFTS_PER_WEEK - nurse_shift_counts.get(nurse, 0))
+        }
+        for nurse in roster_df["Nurse"].tolist()
+    ]).sort_values(by=["Department", "Assigned Shifts", "Nurse"], ascending=[True, False, True])
+    st.dataframe(workload_df, use_container_width=True, hide_index=True)
 
-    # ========================================================
-    # ROSTER SUMMARY
-    # ========================================================
-
-    st.subheader("Roster Summary")
-
-    card_columns = st.columns(4)
-
-    # Required nurse-shifts
-    with card_columns[0]:
-        st.markdown(
-            f"""
-            <div style="
-                background-color:#EAF4FB;
-                border:1px solid #B8D8EA;
-                border-radius:12px;
-                padding:18px;
-                text-align:center;
-            ">
-                <div style="font-size:28px;">👥</div>
-                <div style="font-size:14px;color:#555;">
-                    Required nurse-shifts
-                </div>
-                <div style="
-                    font-size:28px;
-                    font-weight:bold;
-                    color:#234E70;
-                ">
-                    {total_required}
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-    # Assigned nurse-shifts
-    with card_columns[1]:
-        st.markdown(
-            f"""
-            <div style="
-                background-color:#EAF7F0;
-                border:1px solid #B9DFC9;
-                border-radius:12px;
-                padding:18px;
-                text-align:center;
-            ">
-                <div style="font-size:28px;">✅</div>
-                <div style="font-size:14px;color:#555;">
-                    Assigned nurse-shifts
-                </div>
-                <div style="
-                    font-size:28px;
-                    font-weight:bold;
-                    color:#2E6B4A;
-                ">
-                    {total_assigned}
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-    # Weekly capacity
-    with card_columns[2]:
-        st.markdown(
-            f"""
-            <div style="
-                background-color:#FFF6E5;
-                border:1px solid #E8D2A3;
-                border-radius:12px;
-                padding:18px;
-                text-align:center;
-            ">
-                <div style="font-size:28px;">📊</div>
-                <div style="font-size:14px;color:#555;">
-                    Weekly capacity
-                </div>
-                <div style="
-                    font-size:28px;
-                    font-weight:bold;
-                    color:#80652A;
-                ">
-                    {total_capacity}
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-    # Unused capacity
-    with card_columns[3]:
-        st.markdown(
-            f"""
-            <div style="
-                background-color:#F3ECF8;
-                border:1px solid #D5C2E2;
-                border-radius:12px;
-                padding:18px;
-                text-align:center;
-            ">
-                <div style="font-size:28px;">📉</div>
-                <div style="font-size:14px;color:#555;">
-                    Unused capacity
-                </div>
-                <div style="
-                    font-size:28px;
-                    font-weight:bold;
-                    color:#684A7A;
-                ">
-                    {unused_capacity}
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-    st.write("")
-
-    # ========================================================
-    # WEEKLY ROSTER
-    # ========================================================
-
-    st.markdown(
-        """
-        <h2 style="
-            text-align:center;
-            color:#234E70;
-            margin-top:20px;
-        ">
-            📅 Weekly Roster
-        </h2>
-        """,
-        unsafe_allow_html=True
-    )
-
-    st.dataframe(
-        roster_df,
-        use_container_width=True,
-        hide_index=True
-    )
-
-    # ========================================================
-    # NURSE WORKLOAD
-    # ========================================================
-
-    st.markdown(
-        """
-        <h2 style="
-            text-align:center;
-            color:#234E70;
-            margin-top:30px;
-        ">
-            Nurse Workload Summary
-        </h2>
-        """,
-        unsafe_allow_html=True
-    )
-
-    workload_df = pd.DataFrame(
-        [
-            {
-                "Nurse": nurse,
-                "Assigned Shifts": nurse_shift_counts.get(
-                    nurse,
-                    0
-                ),
-                "Maximum Allowed": max_shifts_per_nurse,
-                "Remaining Capacity": max(
-                    0,
-                    max_shifts_per_nurse
-                    - nurse_shift_counts.get(nurse, 0)
+    st.subheader("Department Staffing Coverage")
+    coverage_rows = []
+    for dept in ["ICU", "Ward"]:
+        dept_roster = roster_df[roster_df["Department"] == dept]
+        for shift in SHIFTS:
+            for day in DAYS:
+                actual = sum(
+                    1 for cell in dept_roster[day]
+                    if shift in (cell.split(" + ") if isinstance(cell, str) else [])
                 )
-            }
-            for nurse in nurses
-        ]
-    )
+                required = int(department_staffing_requirements[dept][shift])
+                coverage_rows.append({
+                    "Department": dept, "Day": day, "Shift": shift,
+                    "Required": required, "Assigned": actual,
+                    "Status": "Met" if actual >= required else "Short"
+                })
+    coverage_df = pd.DataFrame(coverage_rows)
+    st.dataframe(coverage_df, use_container_width=True, hide_index=True)
 
-    workload_df = workload_df.sort_values(
-        by=["Assigned Shifts", "Nurse"],
-        ascending=[False, True]
-    )
-
-    st.dataframe(
-        workload_df,
-        use_container_width=True,
-        hide_index=True
-    )
-
-    # ========================================================
-    # KEY OBSERVATIONS
-    # ========================================================
-
-    st.markdown(
-        """
-        <h2 style="
-            text-align:center;
-            color:#234E70;
-            margin-top:30px;
-        ">
-            Key Observations
-        </h2>
-        """,
-        unsafe_allow_html=True
-    )
-
-    # Workforce capacity observation
-    if unused_capacity > 0:
-        st.markdown(
-            f"""
-            <div style="
-                background-color:#FFF8E8;
-                border-left:6px solid #E0B84C;
-                border-radius:8px;
-                padding:14px;
-                margin-bottom:10px;
-            ">
-                <b>📊 Workforce capacity:</b>
-                The roster uses {total_assigned} of
-                {total_capacity} available nurse-shifts,
-                leaving {unused_capacity} unused capacity.
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+    if excess_assignments:
+        st.info(f"The roster contains {excess_assignments} nurse-shifts above the minimum staffing requirement.")
     else:
-        st.markdown(
-            f"""
-            <div style="
-                background-color:#EAF7F0;
-                border-left:6px solid #6BB38A;
-                border-radius:8px;
-                padding:14px;
-                margin-bottom:10px;
-            ">
-                <b>📊 Workforce capacity:</b>
-                All available weekly nurse-shift capacity
-                is utilized.
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+        st.success("The roster meets the minimum staffing requirement without extra assignments.")
 
-    # Staffing observation
-    if excess_assignments > 0:
-        st.markdown(
-            f"""
-            <div style="
-                background-color:#EAF4FB;
-                border-left:6px solid #7BB7D9;
-                border-radius:8px;
-                padding:14px;
-                margin-bottom:10px;
-            ">
-                <b>📌 Staffing:</b>
-                The generated roster contains
-                {excess_assignments} nurse-shifts above
-                the minimum staffing requirement.
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-    else:
-        st.markdown(
-            """
-            <div style="
-                background-color:#EAF4FB;
-                border-left:6px solid #7BB7D9;
-                border-radius:8px;
-                padding:14px;
-                margin-bottom:10px;
-            ">
-                <b>📌 Staffing:</b>
-                The roster meets the minimum staffing
-                requirements without additional assignments.
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-    # Workload observation
-    nurses_below_limit = workload_df[
-        workload_df["Assigned Shifts"]
-        < workload_df["Maximum Allowed"]
-    ]
-
-    if not nurses_below_limit.empty:
-
-        nurse_names = ", ".join(
-            nurses_below_limit["Nurse"].tolist()
-        )
-
-        st.markdown(
-            f"""
-            <div style="
-                background-color:#F3ECF8;
-                border-left:6px solid #A982BC;
-                border-radius:8px;
-                padding:14px;
-                margin-bottom:10px;
-            ">
-                <b>👩‍⚕️ Workload:</b>
-                The following nurses are below their weekly
-                shift limit: {nurse_names}.
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-    else:
-
-        st.markdown(
-            """
-            <div style="
-                background-color:#F3ECF8;
-                border-left:6px solid #A982BC;
-                border-radius:8px;
-                padding:14px;
-                margin-bottom:10px;
-            ">
-                <b>👩‍⚕️ Workload:</b>
-                All nurses are assigned up to their configured
-                weekly shift limit.
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-    # ========================================================
-    # DOWNLOAD ROSTER
-    # ========================================================
-
-    st.markdown("### Download Roster")
-
-    csv_data = roster_df.to_csv(index=False)
-
+    # Export full shift names so the CSV remains clear for hospital use.
     st.download_button(
         label="Download Roster as CSV",
-        data=csv_data,
+        data=roster_df[["Nurse", "Department"] + DAYS].to_csv(index=False),
         file_name="nurse_roster.csv",
         mime="text/csv"
     )
@@ -1331,10 +540,5 @@ if st.session_state["roster"] is not None:
 # ============================================================
 # FOOTER
 # ============================================================
-
 st.divider()
-
-st.caption(
-    "Nurse Roster Optimizer V4 | "
-    "Python • OR-Tools CP-SAT • Streamlit"
-)
+st.caption("Nurse Roster Optimizer V4 | Python • OR-Tools CP-SAT • Streamlit")
