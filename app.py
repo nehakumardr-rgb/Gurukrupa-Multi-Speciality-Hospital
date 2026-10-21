@@ -395,17 +395,27 @@ def calculate_roster_metrics(
     )
 
     return total_required, total_assigned, coverage
+    
 
+# ==============================
+# Hospital Name and Application Heading
+# ==============================
 
-# ============================================================
-# TITLE
-# ============================================================
-
-st.title("🏥 Nurse Roster Optimizer")
+st.markdown(
+    """
+    <h1 style="text-align: center; font-size: 36px;">
+        Gurukrupa Multi Speciality Hospital
+    </h1>
+    <h2 style="text-align: center; font-size: 24px;">
+        Automated Nurse Roster and Workflow Optimization
+    </h2>
+    """,
+    unsafe_allow_html=True
+)
 
 st.caption(
-    "Generate a weekly nurse roster based on staffing requirements, "
-    "availability, preferences and scheduling constraints."
+    "Automated nurse scheduling based on staffing requirements, "
+    "nurse availability, preferences and scheduling constraints."
 )
 
 
