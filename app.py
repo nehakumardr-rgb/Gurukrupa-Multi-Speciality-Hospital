@@ -517,6 +517,17 @@ nurse_departments = {}
 departments_complete = True
 availability_records = []
 
+number_of_nurses_input = st.number_input(
+    "Number of nurses",
+    min_value=1,
+    max_value=100,
+    value=18,
+    step=1,
+    key="number_of_nurses_gurukrupa"
+)
+
+number_of_nurses = int(number_of_nurses_input)
+
 for i in range(number_of_nurses):
 
     # Nurse name and department on one line
