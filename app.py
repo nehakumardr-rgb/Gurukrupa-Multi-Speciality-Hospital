@@ -635,13 +635,6 @@ with summary_col3:
         weekly_requirement
     )
 
-st.info(
-    f"Estimated minimum nurses: {estimated_nurses}. "
-    f"This estimate assumes a maximum of "
-    f"{ASSUMED_MAX_SHIFTS_PER_NURSE} shifts per nurse per week. "
-    "Actual staffing feasibility depends on availability, "
-    "shift preferences and scheduling constraints."
-)
 
 
 
