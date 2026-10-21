@@ -505,7 +505,18 @@ else:
     )
 
 
+# ------------------------------------------------------------
+# Department selection callbacks
+# ------------------------------------------------------------
 
+def select_icu(nurse_index):
+    if st.session_state[f"nurse_icu_gk_{nurse_index}"]:
+        st.session_state[f"nurse_ward_gk_{nurse_index}"] = False
+
+
+def select_ward(nurse_index):
+    if st.session_state[f"nurse_ward_gk_{nurse_index}"]:
+        st.session_state[f"nurse_icu_gk_{nurse_index}"] = False
 
 
 # ------------------------------------------------------------
