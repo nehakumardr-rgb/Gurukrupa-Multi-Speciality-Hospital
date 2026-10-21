@@ -890,7 +890,7 @@ for i in range(number_of_nurses):
 # ------------------------------------------------------------
 
 if len(nurses) < number_of_nurses:
-    st.info(f"Please enter all {number_of_nurses} nurse names.")
+
 
 if len(set(nurses)) != len(nurses):
     st.error("Nurse names must be unique.")
