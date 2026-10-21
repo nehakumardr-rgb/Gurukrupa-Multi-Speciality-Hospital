@@ -889,9 +889,6 @@ for i in range(number_of_nurses):
 # Validate nurse information
 # ------------------------------------------------------------
 
-if len(nurses) < number_of_nurses:
-
-
 if len(set(nurses)) != len(nurses):
     st.error("Nurse names must be unique.")
 
