@@ -677,11 +677,6 @@ number_of_nurses = int(number_of_nurses_input)
 
 for i in range(number_of_nurses):
 
-
-number_of_nurses = int(number_of_nurses_input)
-
-for i in range(number_of_nurses):
-
     # Nurse name and department on one line
     name_col, icu_col, ward_col = st.columns([3, 1, 1])
 
