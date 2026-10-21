@@ -652,9 +652,12 @@ def select_ward(nurse_index):
         st.session_state[f"nurse_icu_gk_{nurse_index}"] = False
 
 
+
 # ------------------------------------------------------------
 # Nurse information and daily availability
 # ------------------------------------------------------------
+
+st.header("2. Nurse Availability")
 
 nurses = []
 nurse_departments = {}
@@ -669,6 +672,11 @@ number_of_nurses_input = st.number_input(
     step=1,
     key="number_of_nurses_gurukrupa"
 )
+
+number_of_nurses = int(number_of_nurses_input)
+
+for i in range(number_of_nurses):
+
 
 number_of_nurses = int(number_of_nurses_input)
 
