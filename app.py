@@ -506,14 +506,16 @@ else:
 
 
 
+
 # ============================================================
-# 2. NURSE INFORMATION
+# 2. NURSE AVAILABILITY
 # ============================================================
 
-st.header("2. Nurse Information")
+st.header("Nurse Availability")
 
 st.write(
-    "Enter each nurse's name and select their department."
+    "Enter each nurse's name, select ICU or Ward, "
+    "and configure daily shift availability."
 )
 
 number_of_nurses_input = st.number_input(
@@ -543,24 +545,30 @@ def select_ward(nurse_index):
 
 
 # ------------------------------------------------------------
-# Nurse names and department checkboxes
+# Nurse information and daily availability
 # ------------------------------------------------------------
 
 nurses = []
 nurse_departments = {}
 departments_complete = True
+availability_records = []
+
+if "DAYS" not in globals():
+    DAYS = [
+        "Monday", "Tuesday", "Wednesday", "Thursday",
+        "Friday", "Saturday", "Sunday"
+    ]
 
 for i in range(number_of_nurses):
 
-    name_col, icu_col, ward_col = st.columns([4, 1, 1])
+    # Nurse name
+    nurse_name = st.text_input(
+        f"Name of Nurse {i + 1}",
+        placeholder="Enter nurse name",
+        key=f"nurse_name_gk_{i}"
+    ).strip()
 
-    with name_col:
-        nurse_name = st.text_input(
-            f"Name of Nurse {i + 1}",
-            placeholder="Enter nurse name",
-            key=f"nurse_name_gk_{i}"
-        ).strip()
-
+    # Department checkboxes immediately below the name
     icu_key = f"nurse_icu_gk_{i}"
     ward_key = f"nurse_ward_gk_{i}"
 
@@ -570,7 +578,9 @@ for i in range(number_of_nurses):
     if ward_key not in st.session_state:
         st.session_state[ward_key] = False
 
-    with icu_col:
+    dept_col1, dept_col2 = st.columns(2)
+
+    with dept_col1:
         st.checkbox(
             "ICU",
             key=icu_key,
@@ -578,7 +588,7 @@ for i in range(number_of_nurses):
             args=(i,)
         )
 
-    with ward_col:
+    with dept_col2:
         st.checkbox(
             "Ward",
             key=ward_key,
@@ -591,18 +601,169 @@ for i in range(number_of_nurses):
 
         if st.session_state[icu_key]:
             nurse_departments[nurse_name] = "ICU"
-
         elif st.session_state[ward_key]:
             nurse_departments[nurse_name] = "Ward"
-
         else:
             departments_complete = False
             st.warning(
                 f"Please select ICU or Ward for {nurse_name}."
             )
-
     else:
         departments_complete = False
+
+    # Daily availability directly below the nurse information
+    st.markdown(f"**Daily shifts — {nurse_name or f'Nurse {i + 1}'}**")
+
+    day_columns = st.columns(7)
+
+    for day_index, day in enumerate(DAYS):
+
+        with day_columns[day_index]:
+
+            st.markdown(f"**{day[:3]}**")
+
+            morning_key = f"morning_v5_{i}_{day_index}"
+            evening_key = f"evening_v5_{i}_{day_index}"
+            night_key = f"night_v5_{i}_{day_index}"
+            off_key = f"off_v5_{i}_{day_index}"
+            single_key = f"single_shift_v1_{i}_{day_index}"
+            double_key = f"double_shift_v1_{i}_{day_index}"
+
+            # Initialize defaults
+            for key, default in [
+                (morning_key, True),
+                (evening_key, True),
+                (night_key, True),
+                (off_key, False),
+                (single_key, False),
+                (double_key, False),
+            ]:
+                if key not in st.session_state:
+                    st.session_state[key] = default
+
+            # Off day clears all other daily options
+            def handle_off_day(
+                morning_key=morning_key,
+                evening_key=evening_key,
+                night_key=night_key,
+                off_key=off_key,
+                single_key=single_key,
+                double_key=double_key,
+            ):
+                if st.session_state[off_key]:
+                    st.session_state[morning_key] = False
+                    st.session_state[evening_key] = False
+                    st.session_state[night_key] = False
+                    st.session_state[single_key] = False
+                    st.session_state[double_key] = False
+                else:
+                    st.session_state[morning_key] = True
+                    st.session_state[evening_key] = True
+                    st.session_state[night_key] = True
+
+            # Selecting a shift clears Off day
+            def handle_shift(
+                morning_key=morning_key,
+                evening_key=evening_key,
+                night_key=night_key,
+                off_key=off_key,
+            ):
+                if (
+                    st.session_state[morning_key]
+                    or st.session_state[evening_key]
+                    or st.session_state[night_key]
+                ):
+                    st.session_state[off_key] = False
+
+            # Single and Double Shift are mutually exclusive
+            def handle_single_shift(
+                single_key=single_key,
+                double_key=double_key,
+            ):
+                if st.session_state[single_key]:
+                    st.session_state[double_key] = False
+
+            def handle_double_shift(
+                single_key=single_key,
+                double_key=double_key,
+            ):
+                if st.session_state[double_key]:
+                    st.session_state[single_key] = False
+
+            off_current = st.session_state[off_key]
+
+            morning = st.checkbox(
+                "M",
+                key=morning_key,
+                disabled=off_current,
+                on_change=handle_shift,
+                help="Morning shift"
+            )
+
+            evening = st.checkbox(
+                "E",
+                key=evening_key,
+                disabled=off_current,
+                on_change=handle_shift,
+                help="Evening shift"
+            )
+
+            night = st.checkbox(
+                "N",
+                key=night_key,
+                disabled=off_current,
+                on_change=handle_shift,
+                help="Night shift"
+            )
+
+            off_day = st.checkbox(
+                "Off day",
+                key=off_key,
+                on_change=handle_off_day
+            )
+
+            single_shift = st.checkbox(
+                "Single Shift",
+                key=single_key,
+                disabled=off_day,
+                on_change=handle_single_shift
+            )
+
+            double_shift = st.checkbox(
+                "Double Shift",
+                key=double_key,
+                disabled=off_day,
+                on_change=handle_double_shift
+            )
+
+            selected_shifts = []
+
+            if morning:
+                selected_shifts.append("Morning")
+            if evening:
+                selected_shifts.append("Evening")
+            if night:
+                selected_shifts.append("Night")
+            if off_day:
+                selected_shifts = []
+
+            availability_records.append({
+                "Nurse": nurse_name or f"Nurse {i + 1}",
+                "Day": day,
+                "Available Shifts": selected_shifts,
+                "Off day": off_day,
+                "Shift Type": (
+                    "Single Shift" if single_shift
+                    else "Double Shift" if double_shift
+                    else None
+                ),
+                "Department": (
+                    nurse_departments.get(nurse_name)
+                    if nurse_name else None
+                )
+            })
+
+    st.divider()
 
 
 # ------------------------------------------------------------
@@ -610,205 +771,12 @@ for i in range(number_of_nurses):
 # ------------------------------------------------------------
 
 if len(nurses) < number_of_nurses:
-    st.info(
-        f"Please enter all {number_of_nurses} nurse names."
-    )
+    st.info(f"Please enter all {number_of_nurses} nurse names.")
 
 if len(set(nurses)) != len(nurses):
     st.error("Nurse names must be unique.")
 
-
-
-# ============================================================
-# 3. NURSE AVAILABILITY & OFF DAYS
-# ============================================================
-
-st.header("3. Nurse Availability & Off Days")
-
-st.markdown(
-    """
-    <div class="availability-note">
-    <b>All shifts are selected by default.</b><br>
-    Deselect any shift when the nurse is not available.
-    Select <b>Off day</b> for a planned/requested day off.
-    Choose either <b>Single Shift</b> or <b>Double Shift</b>
-    for each working day.
-    </div>
-    """,
-    unsafe_allow_html=True
-)
-
-availability_records = []
-
-if len(nurses) == number_of_nurses and len(set(nurses)) == len(nurses):
-
-    for nurse_index, nurse in enumerate(nurses):
-
-        st.subheader(nurse)
-
-        day_columns = st.columns(7)
-
-        for day_index, day in enumerate(DAYS):
-
-            with day_columns[day_index]:
-
-                st.markdown(f"**{day[:3]}**")
-
-                morning_key = f"morning_v5_{nurse_index}_{day_index}"
-                evening_key = f"evening_v5_{nurse_index}_{day_index}"
-                night_key = f"night_v5_{nurse_index}_{day_index}"
-                off_key = f"off_v5_{nurse_index}_{day_index}"
-
-                single_key = f"single_shift_v1_{nurse_index}_{day_index}"
-                double_key = f"double_shift_v1_{nurse_index}_{day_index}"
-
-                # Initialize availability defaults once.
-                if morning_key not in st.session_state:
-                    st.session_state[morning_key] = True
-
-                if evening_key not in st.session_state:
-                    st.session_state[evening_key] = True
-
-                if night_key not in st.session_state:
-                    st.session_state[night_key] = True
-
-                if off_key not in st.session_state:
-                    st.session_state[off_key] = False
-
-                if single_key not in st.session_state:
-                    st.session_state[single_key] = False
-
-                if double_key not in st.session_state:
-                    st.session_state[double_key] = False
-
-                # Off day clears all shift availability and shift types.
-                def handle_off_day(
-                    morning_key=morning_key,
-                    evening_key=evening_key,
-                    night_key=night_key,
-                    off_key=off_key,
-                    single_key=single_key,
-                    double_key=double_key
-                ):
-                    if st.session_state[off_key]:
-                        st.session_state[morning_key] = False
-                        st.session_state[evening_key] = False
-                        st.session_state[night_key] = False
-                        st.session_state[single_key] = False
-                        st.session_state[double_key] = False
-                    else:
-                        st.session_state[morning_key] = True
-                        st.session_state[evening_key] = True
-                        st.session_state[night_key] = True
-
-                # Selecting any available shift clears Off day.
-                def handle_shift(
-                    morning_key=morning_key,
-                    evening_key=evening_key,
-                    night_key=night_key,
-                    off_key=off_key
-                ):
-                    if (
-                        st.session_state.get(morning_key, False)
-                        or st.session_state.get(evening_key, False)
-                        or st.session_state.get(night_key, False)
-                    ):
-                        st.session_state[off_key] = False
-
-                # Single and Double Shift are mutually exclusive.
-                def handle_single_shift(
-                    single_key=single_key,
-                    double_key=double_key,
-                    off_key=off_key
-                ):
-                    if st.session_state[single_key]:
-                        st.session_state[double_key] = False
-                        st.session_state[off_key] = False
-
-                def handle_double_shift(
-                    single_key=single_key,
-                    double_key=double_key,
-                    off_key=off_key
-                ):
-                    if st.session_state[double_key]:
-                        st.session_state[single_key] = False
-                        st.session_state[off_key] = False
-
-                off_day_current = st.session_state[off_key]
-
-                # Availability checkboxes
-                morning = st.checkbox(
-                    "Morning",
-                    key=morning_key,
-                    disabled=off_day_current,
-                    on_change=handle_shift
-                )
-
-                evening = st.checkbox(
-                    "Evening",
-                    key=evening_key,
-                    disabled=off_day_current,
-                    on_change=handle_shift
-                )
-
-                night = st.checkbox(
-                    "Night",
-                    key=night_key,
-                    disabled=off_day_current,
-                    on_change=handle_shift
-                )
-
-                off_day = st.checkbox(
-                    "Off day",
-                    key=off_key,
-                    on_change=handle_off_day
-                )
-
-                # Shift type: one choice per day.
-                single_shift = st.checkbox(
-                    "Single Shift",
-                    key=single_key,
-                    disabled=off_day,
-                    on_change=handle_single_shift
-                )
-
-                double_shift = st.checkbox(
-                    "Double Shift",
-                    key=double_key,
-                    disabled=off_day,
-                    on_change=handle_double_shift
-                )
-
-                selected_shifts = []
-
-                if morning:
-                    selected_shifts.append("Morning")
-
-                if evening:
-                    selected_shifts.append("Evening")
-
-                if night:
-                    selected_shifts.append("Night")
-
-                if off_day:
-                    selected_shifts = []
-
-                availability_records.append({
-                    "Nurse": nurse,
-                    "Day": day,
-                    "Available Shifts": selected_shifts,
-                    "Off day": off_day,
-                    "Shift Type": (
-                        "Single Shift" if single_shift
-                        else "Double Shift" if double_shift
-                        else None
-                    )
-                })
-
-    availability_df = pd.DataFrame(availability_records)
-
-else:
-    availability_df = pd.DataFrame()
+availability_df = pd.DataFrame(availability_records)
 
 
 
