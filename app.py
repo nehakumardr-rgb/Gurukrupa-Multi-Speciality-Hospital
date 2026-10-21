@@ -419,90 +419,233 @@ st.caption(
 )
 
 
+
 # ============================================================
 # 1. STAFFING REQUIREMENTS
 # ============================================================
 
 st.header("1. Staffing Requirements")
 
-st.write(
-    "Enter the minimum number of nurses required for each shift."
+st.caption(
+    "Default requirements for Gurukrupa Multi Speciality Hospital. "
+    "Edit the values if staffing needs change."
 )
 
-default_staffing = pd.DataFrame({
+# ------------------------------------------------------------
+# ICU and Ward requirements
+# Prefilled values are retained during Streamlit reruns
+# ------------------------------------------------------------
+
+icu_col, ward_col = st.columns(2)
+
+with icu_col:
+    st.subheader("ICU")
+
+    icu_beds = st.number_input(
+        "Bed capacity",
+        min_value=1,
+        max_value=500,
+        value=8,
+        step=1,
+        key="icu_beds_gk"
+    )
+
+    st.caption("Nurses required per shift")
+
+    row_label, row_input = st.columns([1.2, 1])
+
+    with row_label:
+        st.write("Morning")
+
+    with row_input:
+        icu_morning = st.number_input(
+            "ICU Morning nurses",
+            min_value=0,
+            max_value=100,
+            value=2,
+            step=1,
+            label_visibility="collapsed",
+            key="icu_morning_gk"
+        )
+
+    row_label, row_input = st.columns([1.2, 1])
+
+    with row_label:
+        st.write("Evening")
+
+    with row_input:
+        icu_evening = st.number_input(
+            "ICU Evening nurses",
+            min_value=0,
+            max_value=100,
+            value=2,
+            step=1,
+            label_visibility="collapsed",
+            key="icu_evening_gk"
+        )
+
+    row_label, row_input = st.columns([1.2, 1])
+
+    with row_label:
+        st.write("Night")
+
+    with row_input:
+        icu_night = st.number_input(
+            "ICU Night nurses",
+            min_value=0,
+            max_value=100,
+            value=2,
+            step=1,
+            label_visibility="collapsed",
+            key="icu_night_gk"
+        )
+
+
+with ward_col:
+    st.subheader("Ward")
+
+    ward_beds = st.number_input(
+        "Bed capacity ",
+        min_value=1,
+        max_value=500,
+        value=24,
+        step=1,
+        key="ward_beds_gk"
+    )
+
+    st.caption("Nurses required per shift")
+
+    row_label, row_input = st.columns([1.2, 1])
+
+    with row_label:
+        st.write("Morning")
+
+    with row_input:
+        ward_morning = st.number_input(
+            "Ward Morning nurses",
+            min_value=0,
+            max_value=100,
+            value=3,
+            step=1,
+            label_visibility="collapsed",
+            key="ward_morning_gk"
+        )
+
+    row_label, row_input = st.columns([1.2, 1])
+
+    with row_label:
+        st.write("Evening")
+
+    with row_input:
+        ward_evening = st.number_input(
+            "Ward Evening nurses",
+            min_value=0,
+            max_value=100,
+            value=3,
+            step=1,
+            label_visibility="collapsed",
+            key="ward_evening_gk"
+        )
+
+    row_label, row_input = st.columns([1.2, 1])
+
+    with row_label:
+        st.write("Night")
+
+    with row_input:
+        ward_night = st.number_input(
+            "Ward Night nurses",
+            min_value=0,
+            max_value=100,
+            value=3,
+            step=1,
+            label_visibility="collapsed",
+            key="ward_night_gk"
+        )
+
+
+# ------------------------------------------------------------
+# Department-specific staffing requirements
+# ------------------------------------------------------------
+
+department_staffing_requirements = {
+    "ICU": {
+        "Beds": int(icu_beds),
+        "Morning": int(icu_morning),
+        "Evening": int(icu_evening),
+        "Night": int(icu_night)
+    },
+    "Ward": {
+        "Beds": int(ward_beds),
+        "Morning": int(ward_morning),
+        "Evening": int(ward_evening),
+        "Night": int(ward_night)
+    }
+}
+
+
+# ------------------------------------------------------------
+# Combined daily requirements for existing roster functions
+# ------------------------------------------------------------
+
+staffing_requirements_df = pd.DataFrame({
     "Day": DAYS,
-    "Morning": [None] * 7,
-    "Evening": [None] * 7,
-    "Night": [None] * 7
+    "Morning": [
+        int(icu_morning) + int(ward_morning)
+    ] * 7,
+    "Evening": [
+        int(icu_evening) + int(ward_evening)
+    ] * 7,
+    "Night": [
+        int(icu_night) + int(ward_night)
+    ] * 7
 })
 
-staffing_requirements_df = st.data_editor(
-    default_staffing,
-    use_container_width=True,
-    hide_index=True,
-    column_config={
-        "Day": st.column_config.TextColumn(
-            "Day",
-            disabled=True
-        ),
-        "Morning": st.column_config.NumberColumn(
-            "Morning",
-            min_value=0,
-            step=1
-        ),
-        "Evening": st.column_config.NumberColumn(
-            "Evening",
-            min_value=0,
-            step=1
-        ),
-        "Night": st.column_config.NumberColumn(
-            "Night",
-            min_value=0,
-            step=1
-        )
-    },
-    key="staffing_requirements_v4"
+
+# ------------------------------------------------------------
+# Weekly workforce estimate
+# ------------------------------------------------------------
+
+weekly_requirement = calculate_weekly_requirement(
+    staffing_requirements_df
 )
 
-# ------------------------------------------------------------
-# Immediate workforce estimate
-# ------------------------------------------------------------
+estimated_nurses = estimate_minimum_nurses(
+    staffing_requirements_df
+)
 
-staffing_complete = staffing_requirements_df[SHIFTS].notna().all().all()
+st.divider()
 
-if staffing_complete:
-    weekly_requirement = calculate_weekly_requirement(
-        staffing_requirements_df
+st.subheader("Weekly Staffing Summary")
+
+summary_col1, summary_col2, summary_col3 = st.columns(3)
+
+with summary_col1:
+    st.metric(
+        "ICU nurse-shifts",
+        (icu_morning + icu_evening + icu_night) * 7
     )
 
-    estimated_nurses = estimate_minimum_nurses(
-        staffing_requirements_df
+with summary_col2:
+    st.metric(
+        "Ward nurse-shifts",
+        (ward_morning + ward_evening + ward_night) * 7
     )
 
-    st.subheader("Workforce Requirement")
-
-    st.markdown(
-        f"""
-        <div class="availability-note">
-        <b>Estimated minimum nurses required: {estimated_nurses}</b><br>
-        Based on <b>{weekly_requirement} nurse-shifts</b> required during the week,
-        assuming a maximum of <b>{ASSUMED_MAX_SHIFTS_PER_NURSE} shifts per nurse per week</b>.
-        </div>
-        """,
-        unsafe_allow_html=True
+with summary_col3:
+    st.metric(
+        "Total nurse-shifts",
+        weekly_requirement
     )
 
-    st.caption(
-        "This is an early capacity estimate. Actual roster feasibility "
-        "will also depend on nurse availability, off days, preferences "
-        "and minimum-rest requirements."
-    )
-else:
-    weekly_requirement = 0
-    st.info(
-        "Enter the minimum staffing requirement for every day and shift "
-        "to calculate the weekly workforce requirement."
-    )
+st.info(
+    f"Estimated minimum nurses: {estimated_nurses}. "
+    f"This estimate assumes a maximum of "
+    f"{ASSUMED_MAX_SHIFTS_PER_NURSE} shifts per nurse per week. "
+    "Actual staffing feasibility depends on availability, "
+    "shift preferences and scheduling constraints."
+)
+
 
 
 # ------------------------------------------------------------
