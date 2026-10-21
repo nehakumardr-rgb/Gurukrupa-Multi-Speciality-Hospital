@@ -509,53 +509,116 @@ else:
 # 2. NURSE INFORMATION
 # ============================================================
 
+# ============================================================
+# 2. NURSE INFORMATION
+# ============================================================
+
 st.header("2. Nurse Information")
+
+st.write(
+    "Enter each nurse's name and select their department."
+)
 
 number_of_nurses_input = st.number_input(
     "Number of nurses",
     min_value=1,
     max_value=100,
-    value=None,
+    value=18,
     step=1,
-    placeholder="Enter number of nurses",
-    key="number_of_nurses_v4"
+    key="number_of_nurses_gurukrupa"
 )
 
-number_of_nurses = (
-    int(number_of_nurses_input)
-    if number_of_nurses_input is not None
-    else 0
-)
+number_of_nurses = int(number_of_nurses_input)
+
+
+# ------------------------------------------------------------
+# Department selection callbacks
+# ------------------------------------------------------------
+
+def select_icu(nurse_index):
+    if st.session_state[f"nurse_icu_gk_{nurse_index}"]:
+        st.session_state[f"nurse_ward_gk_{nurse_index}"] = False
+
+
+def select_ward(nurse_index):
+    if st.session_state[f"nurse_ward_gk_{nurse_index}"]:
+        st.session_state[f"nurse_icu_gk_{nurse_index}"] = False
+
+
+# ------------------------------------------------------------
+# Nurse names and department checkboxes
+# ------------------------------------------------------------
 
 nurses = []
-
-columns = st.columns(3)
+nurse_departments = {}
+departments_complete = True
 
 for i in range(number_of_nurses):
 
-    with columns[i % 3]:
+    name_col, icu_col, ward_col = st.columns([4, 1, 1])
 
+    with name_col:
         nurse_name = st.text_input(
-            f"Nurse {i + 1}",
+            f"Name of Nurse {i + 1}",
             placeholder="Enter nurse name",
-            key=f"nurse_name_v4_{i}"
+            key=f"nurse_name_gk_{i}"
         ).strip()
 
-        if nurse_name:
-            nurses.append(nurse_name)
+    icu_key = f"nurse_icu_gk_{i}"
+    ward_key = f"nurse_ward_gk_{i}"
+
+    if icu_key not in st.session_state:
+        st.session_state[icu_key] = False
+
+    if ward_key not in st.session_state:
+        st.session_state[ward_key] = False
+
+    with icu_col:
+        st.checkbox(
+            "ICU",
+            key=icu_key,
+            on_change=select_icu,
+            args=(i,)
+        )
+
+    with ward_col:
+        st.checkbox(
+            "Ward",
+            key=ward_key,
+            on_change=select_ward,
+            args=(i,)
+        )
+
+    if nurse_name:
+        nurses.append(nurse_name)
+
+        if st.session_state[icu_key]:
+            nurse_departments[nurse_name] = "ICU"
+
+        elif st.session_state[ward_key]:
+            nurse_departments[nurse_name] = "Ward"
+
+        else:
+            departments_complete = False
+            st.warning(
+                f"Please select ICU or Ward for {nurse_name}."
+            )
+
+    else:
+        departments_complete = False
+
+
+# ------------------------------------------------------------
+# Validate nurse information
+# ------------------------------------------------------------
 
 if len(nurses) < number_of_nurses:
-
     st.info(
-        f"Please enter all {number_of_nurses} nurse names "
-        "before generating the roster."
+        f"Please enter all {number_of_nurses} nurse names."
     )
 
-elif len(set(nurses)) != len(nurses):
-
-    st.error(
-        "Nurse names must be unique."
-    )
+if len(set(nurses)) != len(nurses):
+    st.error("Nurse names must be unique.")
 
 
 # ============================================================
