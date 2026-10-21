@@ -413,10 +413,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-st.caption(
-    "Automated nurse scheduling based on staffing requirements, "
-    "nurse availability, preferences and scheduling constraints."
-)
+
 
 
 
