@@ -1114,11 +1114,12 @@ if (
         )
 
 
+
 # ============================================================
 # 7. GENERATE ROSTER
 # ============================================================
 
-st.header("7. Generate Optimized Roster")
+st.header("7. Generate Roster")
 
 generate_button = st.button(
     "Generate Weekly Roster",
@@ -1128,47 +1129,17 @@ generate_button = st.button(
 
 if generate_button:
 
-    if not staffing_complete:
-
-        st.error(
-            "Please enter the minimum staffing requirement for every day and shift."
-        )
-
-    elif number_of_nurses == 0:
-
-        st.error(
-            "Please enter the number of nurses."
-        )
-
-    elif max_shifts_per_nurse == 0:
-
-        st.error(
-            "Please enter the maximum shifts allowed per nurse per week."
-        )
-
-    elif len(nurses) != number_of_nurses:
-
-        st.error(
-            "Please enter all nurse names."
-        )
+    if len(nurses) == 0:
+        st.error("Please enter at least one nurse.")
 
     elif len(set(nurses)) != len(nurses):
-
-        st.error(
-            "Please make sure all nurse names are unique."
-        )
+        st.error("Nurse names must be unique.")
 
     elif availability_df.empty:
-
-        st.error(
-            "Please complete nurse availability."
-        )
+        st.error("Please complete nurse availability.")
 
     else:
-
-        with st.spinner(
-            "Optimizing the weekly roster..."
-        ):
+        with st.spinner("Generating roster..."):
 
             roster_df, status = generate_roster(
                 nurses,
@@ -1179,28 +1150,15 @@ if generate_button:
             )
 
         if roster_df is None:
-
             st.error(
-                "No feasible roster could be generated. Although basic "
-                "capacity and individual shift availability are sufficient, "
-                "the complete set of scheduling constraints cannot be "
-                "satisfied simultaneously."
-            )
-
-            st.info(
-                "Review nurse availability, Off days, maximum shifts per "
-                "nurse and the minimum-rest requirement. The theoretical "
-                "capacity and preliminary availability checks do not test "
-                "all constraints together."
+                "A feasible roster could not be generated. "
+                "Please review nurse availability and staffing requirements."
             )
 
         else:
-
             st.session_state["roster"] = roster_df
 
-            st.success(
-                "A feasible weekly roster has been generated."
-            )
+            st.success("Weekly roster generated successfully.")
 
 
 # ============================================================
