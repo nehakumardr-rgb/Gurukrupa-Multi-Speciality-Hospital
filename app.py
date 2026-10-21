@@ -507,42 +507,6 @@ else:
 
 
 
-# ============================================================
-# 2. NURSE AVAILABILITY
-# ============================================================
-
-st.header("Nurse Availability")
-
-st.write(
-    "Enter each nurse's name, select ICU or Ward, "
-    "and configure daily shift availability."
-)
-
-number_of_nurses_input = st.number_input(
-    "Number of nurses",
-    min_value=1,
-    max_value=100,
-    value=18,
-    step=1,
-    key="number_of_nurses_gurukrupa"
-)
-
-number_of_nurses = int(number_of_nurses_input)
-
-
-# ------------------------------------------------------------
-# Department selection callbacks
-# ------------------------------------------------------------
-
-def select_icu(nurse_index):
-    if st.session_state[f"nurse_icu_gk_{nurse_index}"]:
-        st.session_state[f"nurse_ward_gk_{nurse_index}"] = False
-
-
-def select_ward(nurse_index):
-    if st.session_state[f"nurse_ward_gk_{nurse_index}"]:
-        st.session_state[f"nurse_icu_gk_{nurse_index}"] = False
-
 
 # ------------------------------------------------------------
 # Nurse information and daily availability
@@ -553,22 +517,20 @@ nurse_departments = {}
 departments_complete = True
 availability_records = []
 
-if "DAYS" not in globals():
-    DAYS = [
-        "Monday", "Tuesday", "Wednesday", "Thursday",
-        "Friday", "Saturday", "Sunday"
-    ]
-
 for i in range(number_of_nurses):
 
-    # Nurse name
-    nurse_name = st.text_input(
-        f"Name of Nurse {i + 1}",
-        placeholder="Enter nurse name",
-        key=f"nurse_name_gk_{i}"
-    ).strip()
+    # Nurse name and department on one line
+    name_col, icu_col, ward_col = st.columns([3, 1, 1])
 
-    # Department checkboxes immediately below the name
+    with name_col:
+        nurse_name = st.text_input(
+            f"Name of Nurse {i + 1}",
+            placeholder="Enter nurse name",
+            key=f"nurse_name_gk_{i}",
+            label_visibility="collapsed"
+        ).strip()
+
+    # Department checkboxes
     icu_key = f"nurse_icu_gk_{i}"
     ward_key = f"nurse_ward_gk_{i}"
 
@@ -578,9 +540,7 @@ for i in range(number_of_nurses):
     if ward_key not in st.session_state:
         st.session_state[ward_key] = False
 
-    dept_col1, dept_col2 = st.columns(2)
-
-    with dept_col1:
+    with icu_col:
         st.checkbox(
             "ICU",
             key=icu_key,
@@ -588,7 +548,7 @@ for i in range(number_of_nurses):
             args=(i,)
         )
 
-    with dept_col2:
+    with ward_col:
         st.checkbox(
             "Ward",
             key=ward_key,
@@ -596,6 +556,7 @@ for i in range(number_of_nurses):
             args=(i,)
         )
 
+    # Record nurse name and department
     if nurse_name:
         nurses.append(nurse_name)
 
@@ -611,9 +572,7 @@ for i in range(number_of_nurses):
     else:
         departments_complete = False
 
-    # Daily availability directly below the nurse information
-    st.markdown(f"**Daily shifts — {nurse_name or f'Nurse {i + 1}'}**")
-
+    # Daily availability
     day_columns = st.columns(7)
 
     for day_index, day in enumerate(DAYS):
@@ -641,7 +600,7 @@ for i in range(number_of_nurses):
                 if key not in st.session_state:
                     st.session_state[key] = default
 
-            # Off day clears all other daily options
+            # Off Day clears all other daily options
             def handle_off_day(
                 morning_key=morning_key,
                 evening_key=evening_key,
@@ -661,7 +620,7 @@ for i in range(number_of_nurses):
                     st.session_state[evening_key] = True
                     st.session_state[night_key] = True
 
-            # Selecting a shift clears Off day
+            # Selecting a shift clears Off Day
             def handle_shift(
                 morning_key=morning_key,
                 evening_key=evening_key,
@@ -693,31 +652,28 @@ for i in range(number_of_nurses):
             off_current = st.session_state[off_key]
 
             morning = st.checkbox(
-                "M",
+                "Morning",
                 key=morning_key,
                 disabled=off_current,
-                on_change=handle_shift,
-                help="Morning shift"
+                on_change=handle_shift
             )
 
             evening = st.checkbox(
-                "E",
+                "Evening",
                 key=evening_key,
                 disabled=off_current,
-                on_change=handle_shift,
-                help="Evening shift"
+                on_change=handle_shift
             )
 
             night = st.checkbox(
-                "N",
+                "Night",
                 key=night_key,
                 disabled=off_current,
-                on_change=handle_shift,
-                help="Night shift"
+                on_change=handle_shift
             )
 
             off_day = st.checkbox(
-                "Off day",
+                "Off Day",
                 key=off_key,
                 on_change=handle_off_day
             )
@@ -736,14 +692,18 @@ for i in range(number_of_nurses):
                 on_change=handle_double_shift
             )
 
+            # Record selected shifts for the optimizer
             selected_shifts = []
 
             if morning:
                 selected_shifts.append("Morning")
+
             if evening:
                 selected_shifts.append("Evening")
+
             if night:
                 selected_shifts.append("Night")
+
             if off_day:
                 selected_shifts = []
 
@@ -764,6 +724,7 @@ for i in range(number_of_nurses):
             })
 
     st.divider()
+
 
 
 # ------------------------------------------------------------
