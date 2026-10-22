@@ -102,7 +102,7 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
             for di in range(len(DAYS))
             for si in range(len(SHIFTS))
         ]
-        model.Add(sum(all_assignments) <= MAX_SHIFTS_PER_WEEK)
+
         model.Add(sum(x[nurse, di, 2] for di in range(len(DAYS))) <= MAX_NIGHT_SHIFTS_PER_WEEK)
 
     # Soft target: aim for two Morning, two Evening and two Night shifts
