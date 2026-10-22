@@ -352,7 +352,7 @@ for i in range(number_of_nurses):
 
             for key, default in [
                 (morning_key, True), (evening_key, True), (night_key, True),
-                (off_key, False), (single_key, False), (double_key, False)
+                (off_key, False), (single_key, True), (double_key, False)
             ]:
                 if key not in st.session_state:
                     st.session_state[key] = default
