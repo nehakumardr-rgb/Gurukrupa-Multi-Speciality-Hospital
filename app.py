@@ -306,7 +306,11 @@ missing_names = []
 missing_departments = []
 
 for i in range(number_of_nurses):
-    name_col, icu_col, ward_col = st.columns([3, 1, 1])
+    serial_col, name_col, icu_col, ward_col = st.columns([0.3, 3, 1, 1])
+
+    with serial_col:
+        st.markdown(f"**{i + 1}.**")
+
     with name_col:
         nurse_name = st.text_input(
             f"Name of Nurse {i + 1}", placeholder="Enter nurse name",
