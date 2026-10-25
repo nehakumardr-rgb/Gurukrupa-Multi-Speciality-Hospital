@@ -32,7 +32,6 @@ DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sun
 SHIFTS = ["Morning", "Evening", "Night"]
 TARGET_SHIFTS_PER_TYPE = 2
 MAX_NIGHT_SHIFTS_PER_WEEK = 2
-MAX_SHIFTS_PER_WEEK = 6
 
 if "roster" not in st.session_state:
     st.session_state["roster"] = None
@@ -190,13 +189,7 @@ def explain_infeasibility(nurses, availability_df, nurse_departments, department
                     )
 
         weekly_demand = sum(int(req[shift]) * 7 for shift in SHIFTS)
-        weekly_capacity = len(dept_nurses) * MAX_SHIFTS_PER_WEEK
-        if weekly_demand > weekly_capacity:
-            issues.append(
-                f"{department}: weekly staffing demand is {weekly_demand} nurse-shifts, "
-                f"but {len(dept_nurses)} nurse(s) have a combined maximum capacity of "
-                f"{weekly_capacity} shifts at the current 6-shifts-per-nurse limit."
-            )
+
 
     # Check for missing department assignments.
     unassigned = [n for n in nurses if nurse_departments.get(n) not in ("ICU", "Ward")]
@@ -206,7 +199,7 @@ def explain_infeasibility(nurses, availability_df, nurse_departments, department
     if not issues:
         issues.append(
             "No single obvious shortage was detected. The combination of Off Days, selected shift availability, "
-            "Double Shift selections, the 6-shift weekly limit, and the maximum of 2 Night shifts may conflict."
+            "Single / Double Shift settings and the maximum of 2 Night shifts may conflict."
         )
 
     suggestions = [
@@ -463,8 +456,7 @@ if st.session_state["roster"] is not None:
     total_required, total_assigned, coverage = calculate_roster_metrics(
         roster_df, department_staffing_requirements
     )
-    total_capacity = len(roster_df) * MAX_SHIFTS_PER_WEEK
-    unused_capacity = max(0, total_capacity - total_assigned)
+
     excess_assignments = max(0, total_assigned - total_required)
 
     summary_cols = st.columns(4)
@@ -504,8 +496,6 @@ if st.session_state["roster"] is not None:
             "Nurse": nurse,
             "Department": roster_df.loc[roster_df["Nurse"] == nurse, "Department"].iloc[0],
             "Assigned Shifts": nurse_shift_counts.get(nurse, 0),
-            "Maximum Allowed": MAX_SHIFTS_PER_WEEK,
-            "Remaining Capacity": max(0, MAX_SHIFTS_PER_WEEK - nurse_shift_counts.get(nurse, 0))
         }
         for nurse in roster_df["Nurse"].tolist()
     ]).sort_values(by=["Department", "Assigned Shifts", "Nurse"], ascending=[True, False, True])
