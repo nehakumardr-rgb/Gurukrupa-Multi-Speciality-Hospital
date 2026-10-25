@@ -462,9 +462,8 @@ if st.session_state["roster"] is not None:
     summary_cols = st.columns(4)
     summary_cols[0].metric("Required nurse-shifts", total_required)
     summary_cols[1].metric("Assigned nurse-shifts", total_assigned)
-    summary_cols[2].metric("Weekly capacity", total_capacity)
-    summary_cols[3].metric("Unused capacity", unused_capacity)
-
+    summary_cols[2].metric("Total shifts assigned", total_capacity)
+    
     # Show compact roster in two separate department tables.
     # Each table has Nurse first, then Monday through Sunday.
     display_columns = ["Nurse"] + DAYS
