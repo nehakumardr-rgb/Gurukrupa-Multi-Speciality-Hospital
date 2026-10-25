@@ -82,6 +82,18 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
 
             # A same-day double must be Morning+Evening or Evening+Night.
             # The daily limit and the Morning+Night constraint enforce this.
+        # Prevent consecutive-day duties when the next day is Single Shift.
+    for nurse in nurses:
+        for di in range(len(DAYS) - 1):
+            next_day_row = availability_lookup[(nurse, DAYS[di + 1])]
+            next_day_type = next_day_row["Shift Type"]
+
+            if next_day_type == "Single Shift":
+                model.Add(
+                    sum(x[nurse, di, si] for si in range(len(SHIFTS)))
+                    + sum(x[nurse, di + 1, si] for si in range(len(SHIFTS)))
+                    <= 1
+                )
 
     # Department-specific minimum staffing, for every day and shift.
     for department in ["ICU", "Ward"]:
@@ -206,7 +218,7 @@ def explain_infeasibility(nurses, availability_df, nurse_departments, department
         "To make the roster feasible, first review the specific day/shift shortages above.",
         "Where operationally appropriate, mark additional nurses as available for the short shift, reduce that shift's staffing requirement, or add nurses to the affected department.",
         "Review multiple Off Days and shift selections. A nurse can only be assigned shifts they marked as available.",
-        "If weekly demand exceeds the displayed department capacity, add nurses or revise staffing requirements. Do not remove safety or rest policies without hospital approval."
+        "Review department staffing requirements and nurse availability if the roster cannot be generated. Do not remove safety or rest policies without hospital approval."
     ]
     return issues, suggestions
 
