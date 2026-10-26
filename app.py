@@ -119,16 +119,32 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
                     consecutive_penalty
                 )
 
-    # Department-specific minimum staffing, for every day and shift.
+        # Department-specific staffing: minimize shortages instead of
+    # making full staffing an absolute requirement.
+    coverage_shortages = []
+
     for department in ["ICU", "Ward"]:
-        department_nurses = [n for n in nurses if nurse_departments.get(n) == department]
+        department_nurses = [
+            n for n in nurses
+            if nurse_departments.get(n) == department
+        ]
         req = department_staffing_requirements[department]
+
         for di, day in enumerate(DAYS):
             for si, shift in enumerate(SHIFTS):
                 required = int(req[shift])
-                model.Add(
-                    sum(x[n, di, si] for n in department_nurses) >= required
+
+                assigned = sum(
+                    x[n, di, si] for n in department_nurses
                 )
+
+                shortage = model.NewIntVar(
+                    0, required,
+                    f"shortage_{department}_{di}_{si}"
+                )
+
+                model.Add(assigned + shortage >= required)
+                coverage_shortages.append(shortage)
 
     # Weekly workload limit and no more than two Night shifts per nurse.
     for nurse in nurses:
