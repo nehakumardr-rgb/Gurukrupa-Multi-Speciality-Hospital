@@ -82,17 +82,41 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
 
             # A same-day double must be Morning+Evening or Evening+Night.
             # The daily limit and the Morning+Night constraint enforce this.
-        # Prevent consecutive-day duties when the next day is Single Shift.
+            # PREFER a one-day gap between shifts for Single Shift nurses.
+    # Consecutive-day assignments are allowed when needed for staffing.
+    single_shift_consecutive_penalties = []
+
     for nurse in nurses:
         for di in range(len(DAYS) - 1):
+            current_day_row = availability_lookup[(nurse, DAYS[di])]
             next_day_row = availability_lookup[(nurse, DAYS[di + 1])]
-            next_day_type = next_day_row["Shift Type"]
 
-            if next_day_type == "Single Shift":
+            current_is_single = (
+                current_day_row["Shift Type"] == "Single Shift"
+            )
+            next_is_single = (
+                next_day_row["Shift Type"] == "Single Shift"
+            )
+
+            if current_is_single or next_is_single:
+                current_day_work = sum(
+                    x[nurse, di, si] for si in range(len(SHIFTS))
+                )
+                next_day_work = sum(
+                    x[nurse, di + 1, si] for si in range(len(SHIFTS))
+                )
+
+                consecutive_penalty = model.NewBoolVar(
+                    f"consecutive_single_{nurses.index(nurse)}_{di}"
+                )
+
                 model.Add(
-                    sum(x[nurse, di, si] for si in range(len(SHIFTS)))
-                    + sum(x[nurse, di + 1, si] for si in range(len(SHIFTS)))
-                    <= 1
+                    consecutive_penalty >=
+                    current_day_work + next_day_work - 1
+                )
+
+                single_shift_consecutive_penalties.append(
+                    consecutive_penalty
                 )
 
     # Department-specific minimum staffing, for every day and shift.
@@ -127,9 +151,12 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
             model.Add(count - TARGET_SHIFTS_PER_TYPE == over - under)
             deviations.extend([under, over])
 
-    # Minimize deviation from the weekly shift targets. Staffing coverage
-    # remains a hard constraint; no preference-shift feature is used.
-    model.Minimize(sum(deviations))
+        # Prioritize staffing coverage, weekly shift targets, and rest gaps.
+    # Consecutive-day Single Shift assignments are permitted but discouraged.
+    model.Minimize(
+        100 * sum(deviations)
+        + sum(single_shift_consecutive_penalties)
+    )
 
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = 15
