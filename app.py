@@ -551,7 +551,7 @@ if st.session_state["roster"] is not None:
     if ward_roster.empty:
         st.info("No nurses are currently assigned to Ward.")
     
-else:
+    else:
     st.dataframe(
         ward_roster,
         use_container_width=True,
