@@ -550,19 +550,19 @@ if st.session_state["roster"] is not None:
     ward_roster = display_roster[display_roster["Department"] == "Ward"][display_columns]
     if ward_roster.empty:
         st.info("No nurses are currently assigned to Ward.")
-    else:
-        
-st.dataframe(
-    ward_roster,
-    use_container_width=True,
-    hide_index=True,
-    height=500,
-    column_config={
-        col: st.column_config.Column(width="small")
-        for col in ward_roster.columns
-    }
-)
-
+    
+else:
+    st.dataframe(
+        ward_roster,
+        use_container_width=True,
+        hide_index=True,
+        height=500,
+        column_config={
+            col: st.column_config.Column(width="small")
+            for col in ward_roster.columns
+        }
+    )
+    
 
     st.subheader("Nurse Workload Summary")
     nurse_shift_counts = {
