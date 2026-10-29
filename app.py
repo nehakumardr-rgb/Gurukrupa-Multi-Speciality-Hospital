@@ -119,8 +119,12 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
                     consecutive_penalty
                 )
 
-        # Department-specific staffing: minimize shortages instead of
-    # making full staffing an absolute requirement.
+        # Department-specific staffing, for every day and shift
+    
+    # --------------------------------------------------------
+    # DEPARTMENT STAFFING: MINIMIZE SHORTAGES
+    # --------------------------------------------------------
+
     coverage_shortages = []
 
     for department in ["ICU", "Ward"]:
@@ -128,6 +132,7 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
             n for n in nurses
             if nurse_departments.get(n) == department
         ]
+
         req = department_staffing_requirements[department]
 
         for di, day in enumerate(DAYS):
@@ -135,15 +140,20 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
                 required = int(req[shift])
 
                 assigned = sum(
-                    x[n, di, si] for n in department_nurses
+                    x[n, di, si]
+                    for n in department_nurses
                 )
 
                 shortage = model.NewIntVar(
-                    0, required,
+                    0,
+                    required,
                     f"shortage_{department}_{di}_{si}"
                 )
 
-                model.Add(assigned + shortage >= required)
+                model.Add(
+                    assigned + shortage >= required
+                )
+
                 coverage_shortages.append(shortage)
 
     # Weekly workload limit and no more than two Night shifts per nurse.
@@ -310,8 +320,8 @@ with ward_col:
     ward_beds = st.number_input("Bed capacity ", 1, 500, 24, key="ward_beds_gk")
     st.caption("Nurses required per shift")
     ward_morning = st.number_input("Morning ", 0, 100, 3, key="ward_morning_gk")
-    ward_evening = st.number_input("Evening ", 0, 100, 3, key="ward_evening_gk")
-    ward_night = st.number_input("Night ", 0, 100, 3, key="ward_night_gk")
+    ward_evening = st.number_input("Evening ", 0, 100, 2, key="ward_evening_gk")
+    ward_night = st.number_input("Night ", 0, 100, 2, key="ward_night_gk")
 
 department_staffing_requirements = {
     "ICU": {"Beds": int(icu_beds), "Morning": int(icu_morning), "Evening": int(icu_evening), "Night": int(icu_night)},
