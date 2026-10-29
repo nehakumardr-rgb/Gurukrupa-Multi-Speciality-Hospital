@@ -323,8 +323,8 @@ with ward_col:
     ward_beds = st.number_input("Bed capacity ", 1, 500, 24, key="ward_beds_gk")
     st.caption("Nurses required per shift")
     ward_morning = st.number_input("Morning ", 0, 100, 3, key="ward_morning_gk")
-    ward_evening = st.number_input("Evening ", 0, 100, 2, key="ward_evening_gk")
-    ward_night = st.number_input("Night ", 0, 100, 2, key="ward_night_gk")
+    ward_evening = st.number_input("Evening ", 0, 100, 3, key="ward_evening_gk")
+    ward_night = st.number_input("Night ", 0, 100, 3, key="ward_night_gk")
 
 department_staffing_requirements = {
     "ICU": {"Beds": int(icu_beds), "Morning": int(icu_morning), "Evening": int(icu_evening), "Night": int(icu_night)},
