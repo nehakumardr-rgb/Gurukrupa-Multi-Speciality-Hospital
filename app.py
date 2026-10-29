@@ -179,10 +179,13 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
 
         # Prioritize staffing coverage, weekly shift targets, and rest gaps.
     # Consecutive-day Single Shift assignments are permitted but discouraged.
+    
     model.Minimize(
-        100 * sum(deviations)
+        10000 * sum(coverage_shortages)
+        + 100 * sum(deviations)
         + sum(single_shift_consecutive_penalties)
     )
+
 
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = 15
