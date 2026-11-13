@@ -412,17 +412,40 @@ with ward_col:
     ward_evening = st.number_input("Evening", 0, 100, 3, key="ward_evening_gk")
     ward_night = st.number_input("Night", 0, 100, 3, key="ward_night_gk")
 
+# Store department staffing requirements for the optimizer
+department_staffing_requirements = {
+    "ICU": {
+        "Morning": icu_morning,
+        "Evening": icu_evening,
+        "Night": icu_night
+    },
+    "Ward": {
+        "Morning": ward_morning,
+        "Evening": ward_evening,
+        "Night": ward_night
+    }
+}
+
 # ============================================================
 # 2. NURSE AVAILABILITY
 # ============================================================
 
 
-st.header("2. Nurse Availability")
-with icu_col:
-        st.checkbox("ICU", key=icu_key)
 
-with ward_col:
-        st.checkbox("Ward", key=ward_key)
+# ============================================================
+# 2. NURSE AVAILABILITY
+# ============================================================
+
+st.header("2. Nurse Availability")
+
+number_of_nurses = st.number_input(
+    "Number of nurses",
+    min_value=1,
+    max_value=100,
+    value=18,
+    step=1,
+    key="number_of_nurses_gk"
+)
 
 nurses = []
 nurse_departments = {}
@@ -431,30 +454,32 @@ missing_names = []
 missing_departments = []
 
 for i in range(number_of_nurses):
+
     serial_col, name_col, icu_col, ward_col = st.columns(
-    [0.15, 1, 0.5, 0.5], gap="small"
-)
+        [0.15, 1, 0.5, 0.5], gap="small"
+    )
 
     with serial_col:
         st.markdown(f"**{i + 1}.**")
 
     with name_col:
         nurse_name = st.text_input(
-            f"Name of Nurse {i + 1}", placeholder="Enter nurse name",
-            key=f"nurse_name_gk_{i}", label_visibility="collapsed"
+            f"Name of Nurse {i + 1}",
+            placeholder="Enter nurse name",
+            key=f"nurse_name_gk_{i}",
+            label_visibility="collapsed"
         ).strip()
-    icu_key, ward_key = f"nurse_icu_gk_{i}", f"nurse_ward_gk_{i}"
-    if icu_key not in st.session_state:
-        st.session_state[icu_key] = False
-    if ward_key not in st.session_state:
-        st.session_state[ward_key] = False
-   with icu_col:
-    st.checkbox("ICU", key=icu_key)
 
-   with ward_col:
-    st.checkbox("Ward", key=ward_key)
+    icu_key = f"nurse_icu_gk_{i}"
+    ward_key = f"nurse_ward_gk_{i}"
 
-        if not nurse_name:
+    with icu_col:
+        st.checkbox("ICU", key=icu_key)
+
+    with ward_col:
+        st.checkbox("Ward", key=ward_key)
+
+    if not nurse_name:
         missing_names.append(i + 1)
     else:
         nurses.append(nurse_name)
@@ -473,9 +498,13 @@ for i in range(number_of_nurses):
             missing_departments.append(nurse_name)
 
     day_columns = st.columns(7)
+
     for di, day in enumerate(DAYS):
+
         with day_columns[di]:
+
             st.markdown(f"**{day[:3]}**")
+
             morning_key = f"morning_v5_{i}_{di}"
             evening_key = f"evening_v5_{i}_{di}"
             night_key = f"night_v5_{i}_{di}"
@@ -484,14 +513,24 @@ for i in range(number_of_nurses):
             double_key = f"double_shift_v1_{i}_{di}"
 
             for key, default in [
-                (morning_key, True), (evening_key, True), (night_key, True),
-                (off_key, False), (single_key, True), (double_key, False)
+                (morning_key, True),
+                (evening_key, True),
+                (night_key, True),
+                (off_key, False),
+                (single_key, True),
+                (double_key, False)
             ]:
                 if key not in st.session_state:
                     st.session_state[key] = default
 
-            def handle_off_day(mk=morning_key, ek=evening_key, nk=night_key,
-                               ok=off_key, sk=single_key, dk=double_key):
+            def handle_off_day(
+                mk=morning_key,
+                ek=evening_key,
+                nk=night_key,
+                ok=off_key,
+                sk=single_key,
+                dk=double_key
+            ):
                 if st.session_state[ok]:
                     st.session_state[mk] = False
                     st.session_state[ek] = False
@@ -503,8 +542,17 @@ for i in range(number_of_nurses):
                     st.session_state[ek] = True
                     st.session_state[nk] = True
 
-            def handle_shift(mk=morning_key, ek=evening_key, nk=night_key, ok=off_key):
-                if st.session_state[mk] or st.session_state[ek] or st.session_state[nk]:
+            def handle_shift(
+                mk=morning_key,
+                ek=evening_key,
+                nk=night_key,
+                ok=off_key
+            ):
+                if (
+                    st.session_state[mk]
+                    or st.session_state[ek]
+                    or st.session_state[nk]
+                ):
                     st.session_state[ok] = False
 
             def handle_single(sk=single_key, dk=double_key):
@@ -516,20 +564,59 @@ for i in range(number_of_nurses):
                     st.session_state[sk] = False
 
             is_off = st.session_state[off_key]
-            st.checkbox("Morning", key=morning_key, disabled=is_off, on_change=handle_shift)
-            st.checkbox("Evening", key=evening_key, disabled=is_off, on_change=handle_shift)
-            st.checkbox("Night", key=night_key, disabled=is_off, on_change=handle_shift)
-            st.checkbox("Off Day", key=off_key, on_change=handle_off_day)
-            st.checkbox("Single Shift", key=single_key, disabled=is_off, on_change=handle_single)
-            st.checkbox("Double Shift", key=double_key, disabled=is_off, on_change=handle_double)
+
+            st.checkbox(
+                "Morning",
+                key=morning_key,
+                disabled=is_off,
+                on_change=handle_shift
+            )
+
+            st.checkbox(
+                "Evening",
+                key=evening_key,
+                disabled=is_off,
+                on_change=handle_shift
+            )
+
+            st.checkbox(
+                "Night",
+                key=night_key,
+                disabled=is_off,
+                on_change=handle_shift
+            )
+
+            st.checkbox(
+                "Off Day",
+                key=off_key,
+                on_change=handle_off_day
+            )
+
+            st.checkbox(
+                "Single Shift",
+                key=single_key,
+                disabled=is_off,
+                on_change=handle_single
+            )
+
+            st.checkbox(
+                "Double Shift",
+                key=double_key,
+                disabled=is_off,
+                on_change=handle_double
+            )
 
             selected_shifts = []
+
             if st.session_state[morning_key]:
                 selected_shifts.append("Morning")
+
             if st.session_state[evening_key]:
                 selected_shifts.append("Evening")
+
             if st.session_state[night_key]:
                 selected_shifts.append("Night")
+
             if st.session_state[off_key]:
                 selected_shifts = []
 
@@ -539,14 +626,18 @@ for i in range(number_of_nurses):
                 "Available Shifts": selected_shifts,
                 "Off day": bool(st.session_state[off_key]),
                 "Shift Type": (
-                    "Single Shift" if st.session_state[single_key]
-                    else "Double Shift" if st.session_state[double_key]
+                    "Single Shift"
+                    if st.session_state[single_key]
+                    else "Double Shift"
+                    if st.session_state[double_key]
                     else None
                 )
             })
+
     st.divider()
 
 availability_df = pd.DataFrame(availability_records)
+
 
 # ============================================================
 # 3. GENERATE ROSTER
