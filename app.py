@@ -168,19 +168,20 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
                 model.Add(assigned + shortage >= required)
                 coverage_shortages.append(shortage)
 
-         # --------------------------------------------------------
-# DEBUG: CHECK EACH NURSE'S AVAILABLE SHIFTS
-# --------------------------------------------------------
 
-for nurse in nurses:
+   # --------------------------------------------------------
+   # DEBUG: CHECK EACH NURSE'S AVAILABLE SHIFTS
+   # --------------------------------------------------------
 
-    print("\nNURSE:", nurse)
+    for nurse in nurses:
+
+       print("\nNURSE:", nurse)
 
     for shift in SHIFTS:
 
         available_count = sum(
             1
-            for day in DAYS
+    for day in DAYS
             if (
                 not bool(availability_lookup[(nurse, day)]["Off day"])
                 and shift in availability_lookup[(nurse, day)]["Available Shifts"]
