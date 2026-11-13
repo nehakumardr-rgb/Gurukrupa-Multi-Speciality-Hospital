@@ -168,8 +168,9 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
                 model.Add(assigned + shortage >= required)
                 coverage_shortages.append(shortage)
 
+   
     # --------------------------------------------------------
-    # NIGHT SHIFT RULES
+    # NIGHT SHIFT RULES AND INDIVIDUAL SHIFT MINIMUMS
     # --------------------------------------------------------
 
     consecutive_night_pairs = []
@@ -193,7 +194,7 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
             if bool(availability_lookup[(nurse, day)]["Off day"])
         ]
 
-        # Special nurse: exactly 4 available Night days and 3 Off days.
+        # Special nurse: 4 available Night days and 3 Off days.
         is_special_nurse = (
             len(available_night_days) == 4
             and len(off_days) == 3
@@ -201,7 +202,7 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
 
         if is_special_nurse:
 
-            # Assign all four available Night shifts.
+            # All four Night shifts are mandatory.
             for di in available_night_days:
                 model.Add(
                     sum(
@@ -212,7 +213,7 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
 
         else:
 
-            # All regular nurses: maximum 2 Night shifts per week.
+            # Regular nurses: maximum 2 Night shifts per week.
             model.Add(
                 sum(
                     x[nurse, dept, di, 2]
@@ -221,20 +222,16 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
                 ) <= 2
             )
 
-    # --------------------------------------------------------
-    # MINIMUM 2 MORNING + 2 EVENING + 2 NIGHT SHIFTS
-    # FOR EVERY REGULAR NURSE
-    # --------------------------------------------------------
+            # Every regular nurse must receive at least 2 of each shift.
+            for si, shift in enumerate(SHIFTS):
 
-    for si, shift in enumerate(SHIFTS):
+                nurse_shift_total = sum(
+                    x[nurse, dept, di, si]
+                    for dept in departments
+                    for di in range(len(DAYS))
+                )
 
-        nurse_shift_total = sum(
-            x[nurse, dept, di, si]
-            for dept in departments
-            for di in range(len(DAYS))
-        )
-
-        model.Add(nurse_shift_total >= 2)
+                model.Add(nurse_shift_total >= 2)
 
             # Prefer the two Night shifts to be consecutive.
             for di in range(len(DAYS) - 1):
@@ -255,11 +252,13 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
 
                 model.Add(night_pair <= night_today)
                 model.Add(night_pair <= night_tomorrow)
-                model.Add(night_pair >= night_today + night_tomorrow - 1)
+                model.Add(
+                    night_pair >= night_today + night_tomorrow - 1
+                )
 
                 consecutive_night_pairs.append(night_pair)
 
-                # Prefer one Off day immediately after the second Night.
+                # Prefer one Off day after the second Night.
                 if di + 2 < len(DAYS):
 
                     off_after_pair = model.NewBoolVar(
@@ -267,23 +266,24 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
                     )
 
                     model.Add(off_after_pair <= night_pair)
-                    model.Add(off_after_pair + workday[nurse, di + 2] <= 1)
+                    model.Add(
+                        off_after_pair + workday[nurse, di + 2] <= 1
+                    )
                     model.Add(
                         off_after_pair >= night_pair - workday[nurse, di + 2]
                     )
 
                     off_after_night_pairs.append(off_after_pair)
 
-                    # After the Night-Night-Off pattern,
-                    # prefer Morning or Evening on the next two days.
+                    # Prefer Morning or Evening on the next two days.
                     for target_day in [di + 3, di + 4]:
 
                         if target_day < len(DAYS):
 
                             me_assignments = [
-                                x[nurse, dept, target_day, si]
+                                x[nurse, dept, target_day, shift_index]
                                 for dept in departments
-                                for si in [0, 1]
+                                for shift_index in [0, 1]
                             ]
 
                             me_work = model.NewBoolVar(
@@ -306,6 +306,7 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
                             )
 
                             morning_evening_after_rest.append(me_after_rest)
+
 
     # --------------------------------------------------------
     # WEEKLY WORKLOAD FAIRNESS
