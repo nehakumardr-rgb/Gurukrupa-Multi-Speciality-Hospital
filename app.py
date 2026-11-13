@@ -41,98 +41,113 @@ if "roster_departments" not in st.session_state:
 # ============================================================
 # OPTIMIZER
 # ============================================================
+
 def generate_roster(nurses, availability_df, nurse_departments, department_staffing_requirements):
-    """Create a department-specific weekly roster using CP-SAT."""
+    """Create a weekly roster allowing nurses to work in ICU, Ward, or both."""
+
     model = cp_model.CpModel()
+    departments = ["ICU", "Ward"]
     x = {}
+    workday = {}
+
+    # Create assignment variables for each nurse, department, day and shift.
+    for nurse in nurses:
+        for department in departments:
+            for di, day in enumerate(DAYS):
+                for si, shift in enumerate(SHIFTS):
+                    x[nurse, department, di, si] = model.NewBoolVar(
+                        f"x_{nurses.index(nurse)}_{department}_{di}_{si}"
+                    )
+
+    availability_lookup = {
+        (row["Nurse"], row["Day"]): row
+        for _, row in availability_df.iterrows()
+    }
+
+    # --------------------------------------------------------
+    # AVAILABILITY AND SHIFT CONSTRAINTS
+    # --------------------------------------------------------
 
     for nurse in nurses:
-        for di, day in enumerate(DAYS):
-            for si, shift in enumerate(SHIFTS):
-                x[nurse, di, si] = model.NewBoolVar(f"x_{nurses.index(nurse)}_{di}_{si}")
+        eligible_departments = nurse_departments.get(nurse, [])
 
-    # Availability, off days, shift-type limits, and valid same-day pairs.
-    availability_lookup = {}
-    for _, row in availability_df.iterrows():
-        availability_lookup[(row["Nurse"], row["Day"])] = row
-
-    for nurse in nurses:
         for di, day in enumerate(DAYS):
             row = availability_lookup[(nurse, day)]
             allowed = row["Available Shifts"]
             is_off = bool(row["Off day"])
             shift_type = row["Shift Type"]
 
-            if is_off:
-                for si in range(len(SHIFTS)):
-                    model.Add(x[nurse, di, si] == 0)
-                continue
+            daily_assignments = []
 
-            for si, shift in enumerate(SHIFTS):
-                if shift not in allowed:
-                    model.Add(x[nurse, di, si] == 0)
+            for department in departments:
+                for si, shift in enumerate(SHIFTS):
+                    variable = x[nurse, department, di, si]
+                    daily_assignments.append(variable)
 
-            # Single Shift (or no type selected) allows at most one shift.
-            # Double Shift allows two consecutive shifts on the same day.
+                    # A nurse can only work in selected departments.
+                    if department not in eligible_departments:
+                        model.Add(variable == 0)
+
+                    # Respect selected shift availability.
+                    if is_off or shift not in allowed:
+                        model.Add(variable == 0)
+
+            # One assignment per shift across both departments.
+            for si in range(len(SHIFTS)):
+                model.Add(
+                    sum(x[nurse, dept, di, si] for dept in departments) <= 1
+                )
+
+            # Single Shift = maximum one shift per day.
+            # Double Shift = maximum two shifts per day.
             daily_limit = 2 if shift_type == "Double Shift" else 1
-            model.Add(sum(x[nurse, di, si] for si in range(3)) <= daily_limit)
+            model.Add(sum(daily_assignments) <= daily_limit)
 
-            # Morning + Night are not consecutive on the same day.
-            model.Add(x[nurse, di, 0] + x[nurse, di, 2] <= 1)
+            # Morning + Night is not a permitted double shift.
+            model.Add(
+                sum(x[nurse, dept, di, 0] for dept in departments)
+                + sum(x[nurse, dept, di, 2] for dept in departments)
+                <= 1
+            )
 
-            # A same-day double must be Morning+Evening or Evening+Night.
-            # The daily limit and the Morning+Night constraint enforce this.
-            # PREFER a one-day gap between shifts for Single Shift nurses.
-    # Consecutive-day assignments are allowed when needed for staffing.
+            # Track whether the nurse works on this day.
+            workday[nurse, di] = model.NewBoolVar(
+                f"workday_{nurses.index(nurse)}_{di}"
+            )
+            model.Add(sum(daily_assignments) <= 2 * workday[nurse, di])
+            model.Add(sum(daily_assignments) >= workday[nurse, di])
+
+    # --------------------------------------------------------
+    # PREFER A GAP BETWEEN CONSECUTIVE SINGLE SHIFTS
+    # --------------------------------------------------------
+
     single_shift_consecutive_penalties = []
 
     for nurse in nurses:
         for di in range(len(DAYS) - 1):
-            current_day_row = availability_lookup[(nurse, DAYS[di])]
-            next_day_row = availability_lookup[(nurse, DAYS[di + 1])]
+            current_row = availability_lookup[(nurse, DAYS[di])]
+            next_row = availability_lookup[(nurse, DAYS[di + 1])]
 
-            current_is_single = (
-                current_day_row["Shift Type"] == "Single Shift"
-            )
-            next_is_single = (
-                next_day_row["Shift Type"] == "Single Shift"
-            )
-
-            if current_is_single or next_is_single:
-                current_day_work = sum(
-                    x[nurse, di, si] for si in range(len(SHIFTS))
-                )
-                next_day_work = sum(
-                    x[nurse, di + 1, si] for si in range(len(SHIFTS))
-                )
-
-                consecutive_penalty = model.NewBoolVar(
+            if (
+                current_row["Shift Type"] == "Single Shift"
+                or next_row["Shift Type"] == "Single Shift"
+            ):
+                penalty = model.NewBoolVar(
                     f"consecutive_single_{nurses.index(nurse)}_{di}"
                 )
 
                 model.Add(
-                    consecutive_penalty >=
-                    current_day_work + next_day_work - 1
+                    penalty >= workday[nurse, di] + workday[nurse, di + 1] - 1
                 )
+                single_shift_consecutive_penalties.append(penalty)
 
-                single_shift_consecutive_penalties.append(
-                    consecutive_penalty
-                )
-
-        # Department-specific staffing, for every day and shift
-    
     # --------------------------------------------------------
-    # DEPARTMENT STAFFING: MINIMIZE SHORTAGES
+    # DEPARTMENT STAFFING REQUIREMENTS
     # --------------------------------------------------------
 
     coverage_shortages = []
 
-    for department in ["ICU", "Ward"]:
-        department_nurses = [
-            n for n in nurses
-            if nurse_departments.get(n) == department
-        ]
-
+    for department in departments:
         req = department_staffing_requirements[department]
 
         for di, day in enumerate(DAYS):
@@ -140,45 +155,32 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
                 required = int(req[shift])
 
                 assigned = sum(
-                    x[n, di, si]
-                    for n in department_nurses
+                    x[nurse, department, di, si]
+                    for nurse in nurses
                 )
 
                 shortage = model.NewIntVar(
-                    0,
-                    required,
+                    0, required,
                     f"shortage_{department}_{di}_{si}"
                 )
 
-                model.Add(
-                    assigned + shortage >= required
-                )
-
+                model.Add(assigned + shortage >= required)
                 coverage_shortages.append(shortage)
 
-    # Weekly workload limit and no more than two Night shifts per nurse.
+    # --------------------------------------------------------
+    # MAXIMUM TWO NIGHT SHIFTS PER NURSE PER WEEK
+    # --------------------------------------------------------
+
     for nurse in nurses:
-        all_assignments = [
-            x[nurse, di, si]
-            for di in range(len(DAYS))
-            for si in range(len(SHIFTS))
-        ]
+        model.Add(
+            sum(
+                x[nurse, dept, di, 2]
+                for dept in departments
+                for di in range(len(DAYS))
+            ) <= MAX_NIGHT_SHIFTS_PER_WEEK
+        )
 
-        model.Add(sum(x[nurse, di, 2] for di in range(len(DAYS))) <= MAX_NIGHT_SHIFTS_PER_WEEK)
-
-    
-
-        # Prioritize staffing coverage, weekly shift targets, and rest gaps.
-    # Consecutive-day Single Shift assignments are permitted but discouraged.
-    
-    model.Minimize(
-        10000 * sum(coverage_shortages)
-        + 100 * sum(deviations)
-        + sum(single_shift_consecutive_penalties)
-    )
-
-
-        # --------------------------------------------------------
+    # --------------------------------------------------------
     # WEEKLY WORKLOAD FAIRNESS
     # --------------------------------------------------------
 
@@ -191,7 +193,8 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
 
         model.Add(
             nurse_total == sum(
-                x[nurse, di, si]
+                x[nurse, dept, di, si]
+                for dept in departments
                 for di in range(len(DAYS))
                 for si in range(len(SHIFTS))
             )
@@ -208,7 +211,10 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
     workload_spread = model.NewIntVar(0, 14, "workload_spread")
     model.Add(workload_spread == max_weekly_shifts - min_weekly_shifts)
 
-    # PRIORITY ORDER
+    # --------------------------------------------------------
+    # PRIORITY: COVERAGE, ALLOCATION, FAIRNESS, REST
+    # --------------------------------------------------------
+
     total_allocated_days = sum(
         workday[nurse, di]
         for nurse in nurses
@@ -222,18 +228,44 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
         + sum(single_shift_consecutive_penalties)
     )
 
+    # --------------------------------------------------------
+    # SOLVE
+    # --------------------------------------------------------
+
+    solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = 30
+
+    status = solver.Solve(model)
+
+    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        return None, status
+
+    # --------------------------------------------------------
+    # BUILD DEPARTMENT-SPECIFIC ROSTER
+    # --------------------------------------------------------
+
     rows = []
+
     for nurse in nurses:
-        row = {"Nurse": nurse, "Department": nurse_departments[nurse]}
-        for di, day in enumerate(DAYS):
-            assigned = [
-                shift for si, shift in enumerate(SHIFTS)
-                if solver.Value(x[nurse, di, si])
-            ]
-            row[day] = " + ".join(assigned) if assigned else "Off"
-        rows.append(row)
+        for department in nurse_departments.get(nurse, []):
+            row = {
+                "Nurse": nurse,
+                "Department": department
+            }
+
+            for di, day in enumerate(DAYS):
+                assigned = [
+                    shift
+                    for si, shift in enumerate(SHIFTS)
+                    if solver.Value(x[nurse, department, di, si])
+                ]
+
+                row[day] = " + ".join(assigned) if assigned else "Off"
+
+            rows.append(row)
 
     return pd.DataFrame(rows), status
+
 
 
 def assigned_count(cell):
@@ -341,13 +373,10 @@ with icu_col:
     st.subheader("ICU")
     icu_beds = st.number_input("Bed capacity", 1, 500, 8, key="icu_beds_gk")
     st.caption("Nurses required per shift")
-    icu_morning = st.number_input("Morning", 0, 100, 2, key="icu_morning_gk")
-    icu_evening = st.number_input("Evening", 0, 100, 2, key="icu_evening_gk")
-    icu_night = st.number_input("Night", 0, 100, 2, key="icu_night_gk")
-
+with icu_col:
+        st.checkbox("ICU", key=icu_key, on_change=select_icu, args=(i,))
 with ward_col:
-    st.subheader("Ward")
-    ward_beds = st.number_input("Bed capacity ", 1, 500, 24, key="ward_beds_gk")
+        st.checkbox("Ward", key=ward_key, on_change=select_ward, args=(i,))
     st.caption("Nurses required per shift")
     ward_morning = st.number_input("Morning ", 0, 100, 3, key="ward_morning_gk")
     ward_evening = st.number_input("Evening ", 0, 100, 3, key="ward_evening_gk")
@@ -373,19 +402,14 @@ c3.metric("Total nurse-shifts", weekly_required)
 # ============================================================
 # 2. NURSE AVAILABILITY
 # ============================================================
-def select_icu(i):
-    if st.session_state.get(f"nurse_icu_gk_{i}", False):
-        st.session_state[f"nurse_ward_gk_{i}"] = False
 
-def select_ward(i):
-    if st.session_state.get(f"nurse_ward_gk_{i}", False):
-        st.session_state[f"nurse_icu_gk_{i}"] = False
 
 st.header("2. Nurse Availability")
-number_of_nurses = int(st.number_input(
-    "Number of nurses", min_value=1, max_value=100, value=18, step=1,
-    key="number_of_nurses_gurukrupa"
-))
+with icu_col:
+        st.checkbox("ICU", key=icu_key)
+
+with ward_col:
+        st.checkbox("Ward", key=ward_key)
 
 nurses = []
 nurse_departments = {}
@@ -411,19 +435,27 @@ for i in range(number_of_nurses):
         st.session_state[icu_key] = False
     if ward_key not in st.session_state:
         st.session_state[ward_key] = False
-    with icu_col:
-        st.checkbox("ICU", key=icu_key, on_change=select_icu, args=(i,))
-    with ward_col:
-        st.checkbox("Ward", key=ward_key, on_change=select_ward, args=(i,))
+   with icu_col:
+    st.checkbox("ICU", key=icu_key)
 
-    if not nurse_name:
+   with ward_col:
+    st.checkbox("Ward", key=ward_key)
+
+        if not nurse_name:
         missing_names.append(i + 1)
     else:
         nurses.append(nurse_name)
+
+        selected_departments = []
+
         if st.session_state[icu_key]:
-            nurse_departments[nurse_name] = "ICU"
-        elif st.session_state[ward_key]:
-            nurse_departments[nurse_name] = "Ward"
+            selected_departments.append("ICU")
+
+        if st.session_state[ward_key]:
+            selected_departments.append("Ward")
+
+        if selected_departments:
+            nurse_departments[nurse_name] = selected_departments
         else:
             missing_departments.append(nurse_name)
 
