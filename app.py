@@ -42,6 +42,7 @@ if "roster_departments" not in st.session_state:
 # OPTIMIZER
 # ============================================================
 
+
 def generate_roster(nurses, availability_df, nurse_departments, department_staffing_requirements):
     """Create a weekly roster allowing nurses to work in ICU, Ward, or both."""
 
@@ -50,7 +51,7 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
     x = {}
     workday = {}
 
-    # Create assignment variables for each nurse, department, day and shift.
+    # Create assignment variables.
     for nurse in nurses:
         for department in departments:
             for di, day in enumerate(DAYS):
@@ -84,15 +85,13 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
                     variable = x[nurse, department, di, si]
                     daily_assignments.append(variable)
 
-                    # A nurse can only work in selected departments.
                     if department not in eligible_departments:
                         model.Add(variable == 0)
 
-                    # Respect selected shift availability.
                     if is_off or shift not in allowed:
                         model.Add(variable == 0)
 
-            # One assignment per shift across both departments.
+            # At most one assignment of each shift across departments.
             for si in range(len(SHIFTS)):
                 model.Add(
                     sum(x[nurse, dept, di, si] for dept in departments) <= 1
@@ -114,6 +113,7 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
             workday[nurse, di] = model.NewBoolVar(
                 f"workday_{nurses.index(nurse)}_{di}"
             )
+
             model.Add(sum(daily_assignments) <= 2 * workday[nurse, di])
             model.Add(sum(daily_assignments) >= workday[nurse, di])
 
@@ -139,6 +139,7 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
                 model.Add(
                     penalty >= workday[nurse, di] + workday[nurse, di + 1] - 1
                 )
+
                 single_shift_consecutive_penalties.append(penalty)
 
     # --------------------------------------------------------
@@ -167,9 +168,13 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
                 model.Add(assigned + shortage >= required)
                 coverage_shortages.append(shortage)
 
-       # --------------------------------------------------------
-    # NIGHT SHIFT LIMIT AND SPECIAL 4-NIGHT ARRANGEMENT
     # --------------------------------------------------------
+    # NIGHT SHIFT RULES
+    # --------------------------------------------------------
+
+    consecutive_night_pairs = []
+    off_after_night_pairs = []
+    morning_evening_after_rest = []
 
     for nurse in nurses:
 
@@ -182,10 +187,21 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
             )
         ]
 
-        # Special nurse: 4 available Night days and 3 Off days.
-        if len(available_night_days) == 4:
+        off_days = [
+            di
+            for di, day in enumerate(DAYS)
+            if bool(availability_lookup[(nurse, day)]["Off day"])
+        ]
 
-            # Assign all 4 available Night shifts.
+        # Special nurse: exactly 4 available Night days and 3 Off days.
+        is_special_nurse = (
+            len(available_night_days) == 4
+            and len(off_days) == 3
+        )
+
+        if is_special_nurse:
+
+            # Assign all four available Night shifts.
             for di in available_night_days:
                 model.Add(
                     sum(
@@ -195,7 +211,8 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
                 )
 
         else:
-            # All other nurses: maximum 2 Night shifts per week.
+
+            # All regular nurses: maximum 2 Night shifts per week.
             model.Add(
                 sum(
                     x[nurse, dept, di, 2]
@@ -203,6 +220,77 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
                     for di in range(len(DAYS))
                 ) <= 2
             )
+
+            # Prefer the two Night shifts to be consecutive.
+            for di in range(len(DAYS) - 1):
+
+                night_today = sum(
+                    x[nurse, dept, di, 2]
+                    for dept in departments
+                )
+
+                night_tomorrow = sum(
+                    x[nurse, dept, di + 1, 2]
+                    for dept in departments
+                )
+
+                night_pair = model.NewBoolVar(
+                    f"night_pair_{nurses.index(nurse)}_{di}"
+                )
+
+                model.Add(night_pair <= night_today)
+                model.Add(night_pair <= night_tomorrow)
+                model.Add(night_pair >= night_today + night_tomorrow - 1)
+
+                consecutive_night_pairs.append(night_pair)
+
+                # Prefer one Off day immediately after the second Night.
+                if di + 2 < len(DAYS):
+
+                    off_after_pair = model.NewBoolVar(
+                        f"off_after_nights_{nurses.index(nurse)}_{di}"
+                    )
+
+                    model.Add(off_after_pair <= night_pair)
+                    model.Add(off_after_pair + workday[nurse, di + 2] <= 1)
+                    model.Add(
+                        off_after_pair >= night_pair - workday[nurse, di + 2]
+                    )
+
+                    off_after_night_pairs.append(off_after_pair)
+
+                    # After the Night-Night-Off pattern,
+                    # prefer Morning or Evening on the next two days.
+                    for target_day in [di + 3, di + 4]:
+
+                        if target_day < len(DAYS):
+
+                            me_assignments = [
+                                x[nurse, dept, target_day, si]
+                                for dept in departments
+                                for si in [0, 1]
+                            ]
+
+                            me_work = model.NewBoolVar(
+                                f"morning_evening_{nurses.index(nurse)}_{di}_{target_day}"
+                            )
+
+                            model.Add(me_work <= sum(me_assignments))
+
+                            for assignment in me_assignments:
+                                model.Add(me_work >= assignment)
+
+                            me_after_rest = model.NewBoolVar(
+                                f"me_after_rest_{nurses.index(nurse)}_{di}_{target_day}"
+                            )
+
+                            model.Add(me_after_rest <= off_after_pair)
+                            model.Add(me_after_rest <= me_work)
+                            model.Add(
+                                me_after_rest >= off_after_pair + me_work - 1
+                            )
+
+                            morning_evening_after_rest.append(me_after_rest)
 
     # --------------------------------------------------------
     # WEEKLY WORKLOAD FAIRNESS
@@ -236,18 +324,24 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
     model.Add(workload_spread == max_weekly_shifts - min_weekly_shifts)
 
     # --------------------------------------------------------
-    # PRIORITY: COVERAGE, ALLOCATION, FAIRNESS, REST
+    # OBJECTIVE: COVERAGE, ALLOCATION, NIGHT PATTERN, FAIRNESS
     # --------------------------------------------------------
 
-    total_allocated_days = sum(
-        workday[nurse, di]
+    # Reward total shifts allocated, not just the number of days worked.
+    total_allocated_shifts = sum(
+        x[nurse, dept, di, si]
         for nurse in nurses
+        for dept in departments
         for di in range(len(DAYS))
+        for si in range(len(SHIFTS))
     )
 
     model.Minimize(
         2_000_000_000 * sum(coverage_shortages)
-        - 1_000_000 * total_allocated_days
+        - 1_000_000 * total_allocated_shifts
+        - 250_000 * sum(consecutive_night_pairs)
+        - 100_000 * sum(off_after_night_pairs)
+        - 50_000 * sum(morning_evening_after_rest)
         + 1_000 * workload_spread
         + sum(single_shift_consecutive_penalties)
     )
@@ -272,12 +366,14 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
 
     for nurse in nurses:
         for department in nurse_departments.get(nurse, []):
+
             row = {
                 "Nurse": nurse,
                 "Department": department
             }
 
             for di, day in enumerate(DAYS):
+
                 assigned = [
                     shift
                     for si, shift in enumerate(SHIFTS)
@@ -289,6 +385,7 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
             rows.append(row)
 
     return pd.DataFrame(rows), status
+
 
 
 
@@ -323,7 +420,10 @@ def explain_infeasibility(nurses, availability_df, nurse_departments, department
 
     # Check whether enough nurses in each department are available for each shift.
     for department in ["ICU", "Ward"]:
-        dept_nurses = [n for n in nurses if nurse_departments.get(n) == department]
+        dept_nurses = [
+    n for n in nurses
+    if department in nurse_departments.get(n, [])
+]
         req = department_staffing_requirements[department]
         for day in DAYS:
             for shift in SHIFTS:
@@ -343,7 +443,10 @@ def explain_infeasibility(nurses, availability_df, nurse_departments, department
 
 
     # Check for missing department assignments.
-    unassigned = [n for n in nurses if nurse_departments.get(n) not in ("ICU", "Ward")]
+    unassigned = [
+    n for n in nurses
+    if not nurse_departments.get(n)
+]
     if unassigned:
         issues.append("These nurses do not have a department selected: " + ", ".join(unassigned) + ".")
 
@@ -425,11 +528,6 @@ department_staffing_requirements = {
         "Night": ward_night
     }
 }
-
-# ============================================================
-# 2. NURSE AVAILABILITY
-# ============================================================
-
 
 
 # ============================================================
