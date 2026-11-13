@@ -221,6 +221,21 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
                 ) <= 2
             )
 
+    # --------------------------------------------------------
+    # MINIMUM 2 MORNING + 2 EVENING + 2 NIGHT SHIFTS
+    # FOR EVERY REGULAR NURSE
+    # --------------------------------------------------------
+
+    for si, shift in enumerate(SHIFTS):
+
+        nurse_shift_total = sum(
+            x[nurse, dept, di, si]
+            for dept in departments
+            for di in range(len(DAYS))
+        )
+
+        model.Add(nurse_shift_total >= 2)
+
             # Prefer the two Night shifts to be consecutive.
             for di in range(len(DAYS) - 1):
 
