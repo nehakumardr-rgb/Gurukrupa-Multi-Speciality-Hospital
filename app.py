@@ -167,18 +167,42 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
                 model.Add(assigned + shortage >= required)
                 coverage_shortages.append(shortage)
 
-    # --------------------------------------------------------
-    # MAXIMUM TWO NIGHT SHIFTS PER NURSE PER WEEK
+       # --------------------------------------------------------
+    # NIGHT SHIFT LIMIT AND SPECIAL 4-NIGHT ARRANGEMENT
     # --------------------------------------------------------
 
     for nurse in nurses:
-        model.Add(
-            sum(
-                x[nurse, dept, di, 2]
-                for dept in departments
-                for di in range(len(DAYS))
-            ) <= MAX_NIGHT_SHIFTS_PER_WEEK
-        )
+
+        available_night_days = [
+            di
+            for di, day in enumerate(DAYS)
+            if (
+                not bool(availability_lookup[(nurse, day)]["Off day"])
+                and "Night" in availability_lookup[(nurse, day)]["Available Shifts"]
+            )
+        ]
+
+        # Special nurse: 4 available Night days and 3 Off days.
+        if len(available_night_days) == 4:
+
+            # Assign all 4 available Night shifts.
+            for di in available_night_days:
+                model.Add(
+                    sum(
+                        x[nurse, dept, di, 2]
+                        for dept in departments
+                    ) == 1
+                )
+
+        else:
+            # All other nurses: maximum 2 Night shifts per week.
+            model.Add(
+                sum(
+                    x[nurse, dept, di, 2]
+                    for dept in departments
+                    for di in range(len(DAYS))
+                ) <= 2
+            )
 
     # --------------------------------------------------------
     # WEEKLY WORKLOAD FAIRNESS
@@ -355,7 +379,7 @@ st.markdown(
         Gurukrupa Multi Speciality Hospital
     </h1>
     <h2 style="text-align:center;font-size:24px;">
-        Automated Nurse Roster and Workflow Optimization
+        Automated Nurse Roster and Workforce Optimization
     </h2>
     """,
     unsafe_allow_html=True
@@ -364,6 +388,7 @@ st.markdown(
 # ============================================================
 # 1. STAFFING REQUIREMENTS
 # ============================================================
+
 st.header("1. Staffing Requirements")
 st.caption("Default requirements are prefilled. Edit them if staffing needs change.")
 
@@ -373,31 +398,19 @@ with icu_col:
     st.subheader("ICU")
     icu_beds = st.number_input("Bed capacity", 1, 500, 8, key="icu_beds_gk")
     st.caption("Nurses required per shift")
-with icu_col:
-        st.checkbox("ICU", key=icu_key, on_change=select_icu, args=(i,))
+
+    icu_morning = st.number_input("Morning", 0, 100, 2, key="icu_morning_gk")
+    icu_evening = st.number_input("Evening", 0, 100, 2, key="icu_evening_gk")
+    icu_night = st.number_input("Night", 0, 100, 2, key="icu_night_gk")
+
 with ward_col:
-        st.checkbox("Ward", key=ward_key, on_change=select_ward, args=(i,))
+    st.subheader("Ward")
+    ward_beds = st.number_input("Bed capacity", 1, 500, 24, key="ward_beds_gk")
     st.caption("Nurses required per shift")
-    ward_morning = st.number_input("Morning ", 0, 100, 3, key="ward_morning_gk")
-    ward_evening = st.number_input("Evening ", 0, 100, 3, key="ward_evening_gk")
-    ward_night = st.number_input("Night ", 0, 100, 3, key="ward_night_gk")
 
-department_staffing_requirements = {
-    "ICU": {"Beds": int(icu_beds), "Morning": int(icu_morning), "Evening": int(icu_evening), "Night": int(icu_night)},
-    "Ward": {"Beds": int(ward_beds), "Morning": int(ward_morning), "Evening": int(ward_evening), "Night": int(ward_night)}
-}
-
-weekly_required = sum(
-    department_staffing_requirements[d][s] * 7
-    for d in ["ICU", "Ward"] for s in SHIFTS
-)
-
-st.divider()
-st.subheader("Weekly Staffing Summary")
-c1, c2, c3 = st.columns(3)
-c1.metric("ICU nurse-shifts", (icu_morning + icu_evening + icu_night) * 7)
-c2.metric("Ward nurse-shifts", (ward_morning + ward_evening + ward_night) * 7)
-c3.metric("Total nurse-shifts", weekly_required)
+    ward_morning = st.number_input("Morning", 0, 100, 3, key="ward_morning_gk")
+    ward_evening = st.number_input("Evening", 0, 100, 3, key="ward_evening_gk")
+    ward_night = st.number_input("Night", 0, 100, 3, key="ward_night_gk")
 
 # ============================================================
 # 2. NURSE AVAILABILITY
