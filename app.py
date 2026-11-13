@@ -196,6 +196,7 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
     consecutive_night_pairs = []
     off_after_night_pairs = []
     morning_evening_after_rest = []
+    individual_shift_shortages = []
 
     for nurse in nurses:
 
@@ -242,7 +243,9 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
                 ) <= 2
             )
 
-            # Every regular nurse must receive at least 2 of each shift.
+            # Regular nurses: aim for at least 2 of each shift.
+            # If availability makes this impossible, record the shortfall
+            # instead of making the entire roster infeasible.
             for si, shift in enumerate(SHIFTS):
 
                 nurse_shift_total = sum(
@@ -251,7 +254,14 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
                     for di in range(len(DAYS))
                 )
 
-                model.Add(nurse_shift_total >= 2)
+                shift_shortfall = model.NewIntVar(
+                    0, 2,
+                    f"shift_shortfall_{nurses.index(nurse)}_{si}"
+                )
+
+                model.Add(nurse_shift_total + shift_shortfall >= 2)
+
+                individual_shift_shortages.append(shift_shortfall)
 
             # Prefer the two Night shifts to be consecutive.
             for di in range(len(DAYS) - 1):
@@ -372,8 +382,9 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
         for si in range(len(SHIFTS))
     )
 
-    model.Minimize(
+        model.Minimize(
         2_000_000_000 * sum(coverage_shortages)
+        + 100_000_000 * sum(individual_shift_shortages)
         - 1_000_000 * total_allocated_shifts
         - 250_000 * sum(consecutive_night_pairs)
         - 100_000 * sum(off_after_night_pairs)
