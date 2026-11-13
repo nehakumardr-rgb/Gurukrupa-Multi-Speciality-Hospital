@@ -166,16 +166,7 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
 
         model.Add(sum(x[nurse, di, 2] for di in range(len(DAYS))) <= MAX_NIGHT_SHIFTS_PER_WEEK)
 
-    # Soft target: aim for two Morning, two Evening and two Night shifts
-    # per nurse each week. Leave and staffing feasibility take priority.
-    deviations = []
-    for nurse in nurses:
-        for si, shift in enumerate(SHIFTS):
-            count = sum(x[nurse, di, si] for di in range(len(DAYS)))
-            under = model.NewIntVar(0, 7, f"under_{nurses.index(nurse)}_{si}")
-            over = model.NewIntVar(0, 7, f"over_{nurses.index(nurse)}_{si}")
-            model.Add(count - TARGET_SHIFTS_PER_TYPE == over - under)
-            deviations.extend([under, over])
+    
 
         # Prioritize staffing coverage, weekly shift targets, and rest gaps.
     # Consecutive-day Single Shift assignments are permitted but discouraged.
@@ -187,13 +178,49 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
     )
 
 
-    solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 15
-    solver.parameters.num_search_workers = 8
-    status = solver.Solve(model)
+        # --------------------------------------------------------
+    # WEEKLY WORKLOAD FAIRNESS
+    # --------------------------------------------------------
 
-    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        return None, status
+    weekly_shift_counts = []
+
+    for nurse in nurses:
+        nurse_total = model.NewIntVar(
+            0, 14, f"weekly_total_{nurses.index(nurse)}"
+        )
+
+        model.Add(
+            nurse_total == sum(
+                x[nurse, di, si]
+                for di in range(len(DAYS))
+                for si in range(len(SHIFTS))
+            )
+        )
+
+        weekly_shift_counts.append(nurse_total)
+
+    max_weekly_shifts = model.NewIntVar(0, 14, "max_weekly_shifts")
+    min_weekly_shifts = model.NewIntVar(0, 14, "min_weekly_shifts")
+
+    model.AddMaxEquality(max_weekly_shifts, weekly_shift_counts)
+    model.AddMinEquality(min_weekly_shifts, weekly_shift_counts)
+
+    workload_spread = model.NewIntVar(0, 14, "workload_spread")
+    model.Add(workload_spread == max_weekly_shifts - min_weekly_shifts)
+
+    # PRIORITY ORDER
+    total_allocated_days = sum(
+        workday[nurse, di]
+        for nurse in nurses
+        for di in range(len(DAYS))
+    )
+
+    model.Minimize(
+        2_000_000_000 * sum(coverage_shortages)
+        - 1_000_000 * total_allocated_days
+        + 1_000 * workload_spread
+        + sum(single_shift_consecutive_penalties)
+    )
 
     rows = []
     for nurse in nurses:
