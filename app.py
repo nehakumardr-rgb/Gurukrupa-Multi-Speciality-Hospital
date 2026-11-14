@@ -914,7 +914,45 @@ if st.session_state["roster"] is not None:
                     "Status": "Met" if actual >= required else "Short"
                 })
 
-    
+        # ============================================================
+    # COMBINED DAILY STAFFING SUMMARY (ICU + WARD)
+    # ============================================================
+    st.subheader("Daily Staffing Summary (ICU + Ward)")
+
+    staffing_summary = []
+
+    for shift in SHIFTS:
+        row = {"Shift": shift}
+
+        for day in DAYS:
+            row[day] = sum(
+                1
+                for cell in roster_df[day]
+                if shift in (
+                    cell.split(" + ")
+                    if isinstance(cell, str) else []
+                )
+            )
+
+        staffing_summary.append(row)
+
+    # Total nurses assigned per day across all shifts
+    total_row = {"Shift": "Total Nurses"}
+
+    for day in DAYS:
+        total_row[day] = sum(
+            row[day] for row in staffing_summary
+        )
+
+    staffing_summary.append(total_row)
+
+    staffing_summary_df = pd.DataFrame(staffing_summary)
+
+    st.dataframe(
+        staffing_summary_df,
+        use_container_width=True,
+        hide_index=True
+    )
 
     st.subheader("Nurse Workload Summary")
     nurse_shift_counts = {
