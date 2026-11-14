@@ -895,39 +895,7 @@ if st.session_state["roster"] is not None:
         use_container_width=True,
         hide_index=True
     )
- 
 
-    st.subheader("Department Staffing Coverage")
-
-    coverage_rows = []
-
-    for dept in ["ICU", "Ward"]:
-        dept_roster = roster_df[roster_df["Department"] == dept]
-
-        for shift in SHIFTS:
-            for day in DAYS:
-                actual = sum(
-                    1 for cell in dept_roster[day]
-                    if shift in (
-                        cell.split(" + ")
-                        if isinstance(cell, str) else []
-                    )
-                )
-
-                required = int(
-                    department_staffing_requirements[dept][shift]
-                )
-
-                coverage_rows.append({
-                    "Department": dept,
-                    "Day": day,
-                    "Shift": shift,
-                    "Required": required,
-                    "Assigned": actual,
-                    "Status": "Met" if actual >= required else "Short"
-                })
-
-    
 
     st.subheader("Nurse Workload Summary")
     nurse_shift_counts = {
@@ -937,7 +905,14 @@ if st.session_state["roster"] is not None:
     workload_df = pd.DataFrame([
         {
             "Nurse": nurse,
-            "Department": roster_df.loc[roster_df["Nurse"] == nurse, "Department"].iloc[0],
+    "Department": (
+    "+".join(st.session_state["roster_departments"][nurse])
+    if isinstance(st.session_state["roster_departments"].get(nurse), (list, tuple, set))
+    else st.session_state["roster_departments"].get(
+        nurse,
+        roster_df.loc[roster_df["Nurse"] == nurse, "Department"].iloc[0]
+    )
+),        
             "Assigned Shifts": nurse_shift_counts.get(nurse, 0),
         }
         for nurse in roster_df["Nurse"].tolist()
