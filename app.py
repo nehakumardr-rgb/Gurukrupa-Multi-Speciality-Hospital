@@ -354,6 +354,7 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
     # OBJECTIVE: COVERAGE, ALLOCATION, NIGHT PATTERN, FAIRNESS
     # --------------------------------------------------------
 
+    
     # Reward total shifts allocated, not just the number of days worked.
     total_allocated_shifts = sum(
         x[nurse, dept, di, si]
@@ -363,7 +364,7 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
         for si in range(len(SHIFTS))
     )
 
-        model.Minimize(
+    model.Minimize(
         2_000_000_000 * sum(coverage_shortages)
         + 100_000_000 * sum(individual_shift_shortages)
         - 1_000_000 * total_allocated_shifts
@@ -373,6 +374,7 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
         + 1_000 * workload_spread
         + sum(single_shift_consecutive_penalties)
     )
+
 
     # --------------------------------------------------------
     # SOLVE
