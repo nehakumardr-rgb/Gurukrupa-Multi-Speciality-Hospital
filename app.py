@@ -149,30 +149,7 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
                 night_today + night_tomorrow + work_day_after <= 2
             )
 
-    # --------------------------------------------------------
-    # PREFER A GAP BETWEEN CONSECUTIVE SINGLE SHIFTS
-    # --------------------------------------------------------
-
-    single_shift_consecutive_penalties = []
-
-    for nurse in nurses:
-        for di in range(len(DAYS) - 1):
-            current_row = availability_lookup[(nurse, DAYS[di])]
-            next_row = availability_lookup[(nurse, DAYS[di + 1])]
-
-            if (
-                current_row["Shift Type"] == "Single Shift"
-                or next_row["Shift Type"] == "Single Shift"
-            ):
-                penalty = model.NewBoolVar(
-                    f"consecutive_single_{nurses.index(nurse)}_{di}"
-                )
-
-                model.Add(
-                    penalty >= workday[nurse, di] + workday[nurse, di + 1] - 1
-                )
-
-                single_shift_consecutive_penalties.append(penalty)
+    
 
     # --------------------------------------------------------
     # DEPARTMENT STAFFING REQUIREMENTS
