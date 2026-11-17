@@ -519,11 +519,7 @@ with col2:
         "Gurukrupa Multi Speciality Hospital</h1>",
         unsafe_allow_html=True
     )
-    st.markdown(
-        "<h2 style='font-size:32px; margin-top:0;'>"
-        "Automated Nurse Roster</h2>",
-        unsafe_allow_html=True
-    )
+    st.header("Automated Nurse Roster")
 
 
 
