@@ -503,20 +503,27 @@ def abbreviate_assignment(value):
     return "+".join(abbreviations.get(part.strip(), part.strip()) for part in value.split("+"))
 
 
+
 # ============================================================
 # APPLICATION HEADING
 # ============================================================
-st.markdown(
-    """
-    <h1 style="text-align:center;font-size:36px;">
-        Gurukrupa Multi Speciality Hospital
-    </h1>
-    <h2 style="text-align:center;font-size:24px;">
-        Automated Nurse Roster and Workforce Optimization
-    </h2>
-    """,
-    unsafe_allow_html=True
-)
+col1, col2 = st.columns([1, 5])
+
+with col1:
+    st.image("images.jpg", width=90)
+
+with col2:
+    st.markdown(
+        "<h1 style='font-size:32px; margin-bottom:0;'>"
+        "Gurukrupa Multi Speciality Hospital</h1>",
+        unsafe_allow_html=True
+    )
+    st.markdown(
+        "<h2 style='font-size:24px; margin-top:4px;'>"
+        "Automated Nurse Roster</h2>",
+        unsafe_allow_html=True
+    )
+
 
 # ============================================================
 # 1. STAFFING REQUIREMENTS
