@@ -88,7 +88,10 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
                     if department not in eligible_departments:
                         model.Add(variable == 0)
 
-                    if is_off or shift not in allowed:
+            # An Off day applies to the nurse across ALL departments.
+                    if is_off:
+                        model.Add(variable == 0)
+                    elif shift not in allowed:
                         model.Add(variable == 0)
 
             # At most one assignment of each shift across departments.
@@ -116,6 +119,35 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
 
             model.Add(sum(daily_assignments) <= 2 * workday[nurse, di])
             model.Add(sum(daily_assignments) >= workday[nurse, di])
+
+# --------------------------------------------------------
+# ENFORCE NIGHT-NIGHT-OFF PATTERN FOR ALL NURSES
+# --------------------------------------------------------
+
+for nurse in nurses:
+    for di in range(len(DAYS) - 2):
+
+        night_today = sum(
+            x[nurse, dept, di, 2]
+            for dept in departments
+        )
+
+        night_tomorrow = sum(
+            x[nurse, dept, di + 1, 2]
+            for dept in departments
+        )
+
+        work_day_after = sum(
+            x[nurse, dept, di + 2, si]
+            for dept in departments
+            for si in range(len(SHIFTS))
+        )
+
+        # If a nurse works Night on two consecutive days,
+        # the following day must be completely Off.
+        model.Add(
+            night_today + night_tomorrow + work_day_after <= 2
+        )
 
     # --------------------------------------------------------
     # PREFER A GAP BETWEEN CONSECUTIVE SINGLE SHIFTS
