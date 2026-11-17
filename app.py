@@ -120,34 +120,34 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
             model.Add(sum(daily_assignments) <= 2 * workday[nurse, di])
             model.Add(sum(daily_assignments) >= workday[nurse, di])
 
-# --------------------------------------------------------
-# ENFORCE NIGHT-NIGHT-OFF PATTERN FOR ALL NURSES
-# --------------------------------------------------------
-
-for nurse in nurses:
-    for di in range(len(DAYS) - 2):
-
-        night_today = sum(
-            x[nurse, dept, di, 2]
-            for dept in departments
-        )
-
-        night_tomorrow = sum(
-            x[nurse, dept, di + 1, 2]
-            for dept in departments
-        )
-
-        work_day_after = sum(
-            x[nurse, dept, di + 2, si]
-            for dept in departments
-            for si in range(len(SHIFTS))
-        )
-
-        # If a nurse works Night on two consecutive days,
-        # the following day must be completely Off.
-        model.Add(
-            night_today + night_tomorrow + work_day_after <= 2
-        )
+    # --------------------------------------------------------
+    # ENFORCE NIGHT-NIGHT-OFF PATTERN FOR ALL NURSES
+    # --------------------------------------------------------
+    
+    for nurse in nurses:
+        for di in range(len(DAYS) - 2):
+    
+            night_today = sum(
+                x[nurse, dept, di, 2]
+                for dept in departments
+            )
+    
+            night_tomorrow = sum(
+                x[nurse, dept, di + 1, 2]
+                for dept in departments
+            )
+    
+            work_day_after = sum(
+                x[nurse, dept, di + 2, si]
+                for dept in departments
+                for si in range(len(SHIFTS))
+            )
+    
+            # If a nurse works Night on two consecutive days,
+            # the following day must be completely Off.
+            model.Add(
+                night_today + night_tomorrow + work_day_after <= 2
+            )
 
     # --------------------------------------------------------
     # PREFER A GAP BETWEEN CONSECUTIVE SINGLE SHIFTS
@@ -404,7 +404,7 @@ for nurse in nurses:
         - 100_000 * sum(off_after_night_pairs)
         - 50_000 * sum(morning_evening_after_rest)
         + 1_000 * workload_spread
-        + sum(single_shift_consecutive_penalties)
+        
     )
 
 
