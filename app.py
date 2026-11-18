@@ -88,10 +88,7 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
                     if department not in eligible_departments:
                         model.Add(variable == 0)
 
-            # An Off day applies to the nurse across ALL departments.
-                    if is_off:
-                        model.Add(variable == 0)
-                    elif shift not in allowed:
+                    if is_off or shift not in allowed:
                         model.Add(variable == 0)
 
             # At most one assignment of each shift across departments.
@@ -121,35 +118,29 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
             model.Add(sum(daily_assignments) >= workday[nurse, di])
 
     # --------------------------------------------------------
-    # ENFORCE NIGHT-NIGHT-OFF PATTERN FOR ALL NURSES
+    # PREFER A GAP BETWEEN CONSECUTIVE SINGLE SHIFTS
     # --------------------------------------------------------
-    
-    for nurse in nurses:
-        for di in range(len(DAYS) - 2):
-    
-            night_today = sum(
-                x[nurse, dept, di, 2]
-                for dept in departments
-            )
-    
-            night_tomorrow = sum(
-                x[nurse, dept, di + 1, 2]
-                for dept in departments
-            )
-    
-            work_day_after = sum(
-                x[nurse, dept, di + 2, si]
-                for dept in departments
-                for si in range(len(SHIFTS))
-            )
-    
-            # If a nurse works Night on two consecutive days,
-            # the following day must be completely Off.
-            model.Add(
-                night_today + night_tomorrow + work_day_after <= 2
-            )
 
-    
+    single_shift_consecutive_penalties = []
+
+    for nurse in nurses:
+        for di in range(len(DAYS) - 1):
+            current_row = availability_lookup[(nurse, DAYS[di])]
+            next_row = availability_lookup[(nurse, DAYS[di + 1])]
+
+            if (
+                current_row["Shift Type"] == "Single Shift"
+                or next_row["Shift Type"] == "Single Shift"
+            ):
+                penalty = model.NewBoolVar(
+                    f"consecutive_single_{nurses.index(nurse)}_{di}"
+                )
+
+                model.Add(
+                    penalty >= workday[nurse, di] + workday[nurse, di + 1] - 1
+                )
+
+                single_shift_consecutive_penalties.append(penalty)
 
     # --------------------------------------------------------
     # DEPARTMENT STAFFING REQUIREMENTS
@@ -381,7 +372,7 @@ def generate_roster(nurses, availability_df, nurse_departments, department_staff
         - 100_000 * sum(off_after_night_pairs)
         - 50_000 * sum(morning_evening_after_rest)
         + 1_000 * workload_spread
-        
+        + sum(single_shift_consecutive_penalties)
     )
 
 
